@@ -1,0 +1,71 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-sans: 'Inter', sans-serif;
+  --font-serif: 'Playfair Display', serif;
+
+  --radius-sm: 0rem;
+  --radius-md: 0rem;
+  --radius-lg: 0rem;
+
+  /* HSL Values: H S% L% */
+  /* Pure Black & White Theme */
+  --color-background: 0 0% 5%; /* Almost black #0d0d0d */
+  --color-foreground: 0 0% 95%; /* Off-white #f2f2f2 */
+
+  --color-card: 0 0% 5%;
+  --color-card-foreground: 0 0% 95%;
+
+  --color-popover: 0 0% 5%;
+  --color-popover-foreground: 0 0% 95%;
+
+  --color-primary: 0 0% 98%;
+  --color-primary-foreground: 0 0% 5%;
+
+  --color-secondary: 0 0% 15%;
+  --color-secondary-foreground: 0 0% 98%;
+
+  --color-muted: 0 0% 15%;
+  --color-muted-foreground: 0 0% 60%;
+
+  --color-accent: 0 0% 15%;
+  --color-accent-foreground: 0 0% 98%;
+
+  --color-destructive: 0 0% 30%;
+  --color-destructive-foreground: 0 0% 98%;
+
+  --color-border: 0 0% 20%;
+  --color-input: 0 0% 20%;
+  --color-ring: 0 0% 80%;
+
+  /* Monochrome Charts */
+  --color-chart-1: 0 0% 90%;
+  --color-chart-2: 0 0% 70%;
+  --color-chart-3: 0 0% 50%;
+  --color-chart-4: 0 0% 30%;
+  --color-chart-5: 0 0% 10%;
+
+  --color-sidebar: 0 0% 5%;
+  --color-sidebar-foreground: 0 0% 95%;
+  --color-sidebar-primary: 0 0% 98%;
+  --color-sidebar-primary-foreground: 0 0% 5%;
+  --color-sidebar-accent: 0 0% 15%;
+  --color-sidebar-accent-foreground: 0 0% 98%;
+  --color-sidebar-border: 0 0% 20%;
+  --color-sidebar-ring: 0 0% 80%;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased selection:bg-white selection:text-black;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-serif tracking-tight font-medium;
+  }
+}
