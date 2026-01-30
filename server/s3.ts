@@ -5,49 +5,30 @@ import {
     DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { env } from "./config";
 
 const s3Client = new S3Client({
-    region: process.env.S3_REGION || "us-east-1",
-    endpoint: process.env.S3_ENDPOINT || undefined,
+    region: env.S3_REGION,
+    endpoint: env.S3_ENDPOINT,
     credentials: {
-        accessKeyId: process.env.S3_ACCESS_KEY_ID || "",
-        secretAccessKey: process.env.S3_SECRET_ACCESS_KEY || "",
+        accessKeyId: env.S3_ACCESS_KEY_ID,
+        secretAccessKey: env.S3_SECRET_ACCESS_KEY,
     },
-    forcePathStyle: !!process.env.S3_ENDPOINT, // Required for non-AWS S3
+    forcePathStyle: !!env.S3_ENDPOINT, // Required for non-AWS S3
 });
 
-const BUCKET_NAME = process.env.S3_BUCKET_NAME || "";
-
-export async function uploadToS3(
-    file: Buffer,
-    key: string,
-    contentType: string
-): Promise<string> {
-    const command = new PutObjectCommand({
-        Bucket: BUCKET_NAME,
-        Key: key,
-        Body: file,
-        ContentType: contentType,
-    });
-
-    await s3Client.send(command);
-
-    // Return public URL (adjust based on your bucket's public access settings)
-    if (process.env.S3_ENDPOINT) {
-        return `${process.env.S3_ENDPOINT}/${BUCKET_NAME}/${key}`;
-    }
-    return `https://${BUCKET_NAME}.s3.${process.env.S3_REGION}.amazonaws.com/${key}`;
-}
+const BUCKET_NAME = env.S3_BUCKET_NAME;
 
 export async function getPresignedDownloadUrl(
     key: string,
-    filename?: string
+    filename?: string,
+    inline: boolean = false
 ): Promise<string> {
     const command = new GetObjectCommand({
         Bucket: BUCKET_NAME,
         Key: key,
         ResponseContentDisposition: filename
-            ? `attachment; filename="${filename}"`
+            ? `${inline ? 'inline' : 'attachment'}; filename="${filename}"`
             : undefined,
     });
 

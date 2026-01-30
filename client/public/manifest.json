@@ -1,0 +1,23 @@
+{
+    "name": "Mono S3 File Manager",
+    "short_name": "Mono S3",
+    "description": "A premium file management application with S3 storage",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#000000",
+    "theme_color": "#000000",
+    "orientation": "portrait-primary",
+    "icons": [
+        {
+            "src": "/android-chrome-512x512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "any maskable"
+        }
+    ],
+    "categories": [
+        "utilities",
+        "productivity"
+    ],
+    "lang": "en-US"
+}

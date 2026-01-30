@@ -6,7 +6,7 @@ import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { motion, AnimatePresence } from "framer-motion";
 import { useState, useRef, useCallback } from "react";
-import { Upload, X, FileIcon, Check, Edit2, Save, Trash2 } from "lucide-react";
+import { Upload, X, FileIcon, Check, Edit2, Save, Trash2, Copy, ExternalLink } from "lucide-react";
 import { type File as UploadedFile } from "@shared/schema";
 import {
     AlertDialog,
@@ -39,19 +39,25 @@ export default function UploadGame() {
     const [editingFileId, setEditingFileId] = useState<string | null>(null);
     const [editName, setEditName] = useState("");
     const [deletingFileId, setDeletingFileId] = useState<string | null>(null);
+    const [expiresAt, setExpiresAt] = useState("");
+    const [maxDownloads, setMaxDownloads] = useState("");
+    const [isPrivate, setIsPrivate] = useState(false);
+    const [tags, setTags] = useState("");
+    const [parentId, setParentId] = useState("");
+    const [pin, setPin] = useState("");
 
     // Previous files query
     const { data: previousFiles } = useQuery<UploadedFile[]>({
         queryKey: ["/api/files"],
     });
 
-    const uploadFile = async (file: File, category: string) => {
+    const uploadFile = async (file: File, category: string, contentType: string) => {
         return new Promise((resolve, reject) => {
             // 1. Get Presigned URL
             fetch("/api/upload-url", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ filename: file.name, type: file.type }),
+                body: JSON.stringify({ filename: file.name, type: contentType }),
             })
                 .then(res => res.json())
                 .then(async (data) => {
@@ -101,9 +107,15 @@ export default function UploadGame() {
                                         name: file.name,
                                         key,
                                         url: finalPublicUrl, // This might need adjustment based on bucket policy
-                                        type: file.type,
+                                        type: contentType,
                                         size: file.size,
                                         category: category || "other",
+                                        isPrivate,
+                                        expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
+                                        maxDownloads: maxDownloads ? parseInt(maxDownloads) : null,
+                                        tags: tags.split(",").map(t => t.trim()).filter(Boolean),
+                                        parentId: parentId || null,
+                                        pin: isPrivate ? pin : null,
                                     }),
                                 });
 
@@ -123,7 +135,7 @@ export default function UploadGame() {
                     xhr.addEventListener("error", () => reject(new Error("Network error")));
 
                     xhr.open("PUT", url);
-                    xhr.setRequestHeader("Content-Type", file.type);
+                    xhr.setRequestHeader("Content-Type", contentType);
                     xhr.send(file);
                 })
                 .catch(reject);
@@ -199,11 +211,17 @@ export default function UploadGame() {
         e.preventDefault();
         if (!selectedFile) return;
 
+        if (isPrivate && pin && !/^\d{4}$/.test(pin)) {
+            toast({ title: "Invalid PIN", description: "PIN must be exactly 4 digits.", variant: "destructive" });
+            return;
+        }
+
         setIsUploading(true);
+        const contentType = selectedFile.type || "application/octet-stream";
         setProgress({ loaded: 0, total: selectedFile.size, speed: 0, percentage: 0 });
 
         try {
-            await uploadFile(selectedFile, category);
+            await uploadFile(selectedFile, category, contentType);
             setUploadComplete(true);
             toast({ title: "Success", description: "File uploaded successfully." });
             queryClient.invalidateQueries({ queryKey: ["/api/files"] });
@@ -213,6 +231,12 @@ export default function UploadGame() {
                 setCategory("");
                 setProgress(null);
                 setUploadComplete(false);
+                setExpiresAt("");
+                setMaxDownloads("");
+                setIsPrivate(false);
+                setTags("");
+                setParentId("");
+                setPin("");
             }, 2000);
         } catch (error) {
             console.error(error);
@@ -237,6 +261,13 @@ export default function UploadGame() {
         if (bytes < 1024) return `${bytes} B`;
         if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
         return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    };
+
+    const copyToClipboard = (id: string, name: string) => {
+        const url = `${window.location.origin}/link/${id}`;
+        navigator.clipboard.writeText(url).then(() => {
+            toast({ title: "Copied!", description: `Link for ${name} copied to clipboard.` });
+        });
     };
 
     const formatSpeed = (bytesPerSecond: number) => {
@@ -396,6 +427,114 @@ export default function UploadGame() {
                         />
                     </div>
 
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="space-y-2">
+                            <Label htmlFor="expiresAt" className="text-xs uppercase tracking-widest opacity-50">
+                                Expiration Date (optional)
+                            </Label>
+                            <Input
+                                id="expiresAt"
+                                type="datetime-local"
+                                value={expiresAt}
+                                onChange={(e) => setExpiresAt(e.target.value)}
+                                className="bg-transparent border-white/20 rounded-none focus:border-white transition-colors"
+                                disabled={isUploading}
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="maxDownloads" className="text-xs uppercase tracking-widest opacity-50">
+                                Max Downloads (optional)
+                            </Label>
+                            <Input
+                                id="maxDownloads"
+                                type="number"
+                                value={maxDownloads}
+                                onChange={(e) => setMaxDownloads(e.target.value)}
+                                className="bg-transparent border-white/20 rounded-none focus:border-white transition-colors"
+                                placeholder="e.g. 100"
+                                disabled={isUploading}
+                            />
+                        </div>
+                    </div>
+
+                    <div className="space-y-2">
+                        <Label htmlFor="tags" className="text-xs uppercase tracking-widest opacity-50">
+                            Tags (comma separated)
+                        </Label>
+                        <Input
+                            id="tags"
+                            value={tags}
+                            onChange={(e) => setTags(e.target.value)}
+                            className="bg-transparent border-white/20 rounded-none focus:border-white transition-colors"
+                            placeholder="e.g. gaming, trailer, 2024"
+                            disabled={isUploading}
+                        />
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={() => setIsPrivate(!isPrivate)}
+                            className={`w-12 h-6 rounded-full transition-colors relative ${isPrivate ? "bg-white" : "bg-white/10"}`}
+                            disabled={isUploading}
+                        >
+                            <motion.div
+                                animate={{ x: isPrivate ? 24 : 0 }}
+                                className={`absolute inset-y-1 left-1 w-4 h-4 rounded-full ${isPrivate ? "bg-black" : "bg-white/50"}`}
+                            />
+                        </button>
+                        <span className="text-xs uppercase tracking-widest opacity-50">Private File</span>
+                    </div>
+
+                    <AnimatePresence>
+                        {isPrivate && (
+                            <motion.div
+                                initial={{ opacity: 0, height: 0 }}
+                                animate={{ opacity: 1, height: "auto" }}
+                                exit={{ opacity: 0, height: 0 }}
+                                className="space-y-2 overflow-hidden"
+                            >
+                                <Label htmlFor="pin" className="text-xs uppercase tracking-widest opacity-50">
+                                    4-Digit Download PIN (optional)
+                                </Label>
+                                <Input
+                                    id="pin"
+                                    type="text"
+                                    maxLength={4}
+                                    value={pin}
+                                    onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
+                                    className="bg-transparent border-white/20 rounded-none focus:border-white transition-colors"
+                                    placeholder="e.g. 1234"
+                                    disabled={isUploading}
+                                />
+                                <p className="text-[10px] text-muted-foreground italic">
+                                    If set, anyone (including you) will need this PIN to download the file.
+                                </p>
+                            </motion.div>
+                        )}
+                    </AnimatePresence>
+
+                    <div className="space-y-2">
+                        <Label htmlFor="parentId" className="text-xs uppercase tracking-widest opacity-50">
+                            Previous Version (optional)
+                        </Label>
+                        <select
+                            id="parentId"
+                            value={parentId}
+                            onChange={(e) => setParentId(e.target.value)}
+                            className="w-full bg-black border border-white/20 rounded-none h-12 px-3 text-sm focus:border-white outline-none transition-colors"
+                            disabled={isUploading}
+                        >
+                            <option value="">No previous version</option>
+                            {previousFiles?.map(f => (
+                                <option key={f.id} value={f.id}>{f.name}</option>
+                            ))}
+                        </select>
+                        <p className="text-[10px] text-muted-foreground italic">
+                            Select an existing file to link this as a newer version.
+                        </p>
+                    </div>
+
                     <Button
                         type="submit"
                         disabled={!selectedFile || isUploading || uploadComplete}
@@ -447,6 +586,25 @@ export default function UploadGame() {
                                     </div>
 
                                     <div className="flex items-center gap-2 ml-4">
+                                        <Button
+                                            size="icon"
+                                            variant="ghost"
+                                            onClick={() => copyToClipboard(file.id, file.name)}
+                                            className="h-8 w-8 opacity-0 group-hover:opacity-100 hover:bg-white hover:text-black rounded-sm transition-all"
+                                            title="Copy Link"
+                                        >
+                                            <Copy className="w-3 h-3" />
+                                        </Button>
+                                        <a href={`/link/${file.id}`} target="_blank" rel="noreferrer">
+                                            <Button
+                                                size="icon"
+                                                variant="ghost"
+                                                className="h-8 w-8 opacity-0 group-hover:opacity-100 hover:bg-white hover:text-black rounded-sm transition-all"
+                                                title="Open Link"
+                                            >
+                                                <ExternalLink className="w-3 h-3" />
+                                            </Button>
+                                        </a>
                                         {editingFileId === file.id ? (
                                             <>
                                                 <Button
@@ -472,6 +630,7 @@ export default function UploadGame() {
                                                 variant="ghost"
                                                 onClick={() => startEditing(file)}
                                                 className="h-8 w-8 opacity-0 group-hover:opacity-100 hover:bg-white hover:text-black rounded-sm transition-all"
+                                                title="Edit Name"
                                             >
                                                 <Edit2 className="w-3 h-3" />
                                             </Button>

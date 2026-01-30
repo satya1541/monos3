@@ -37,6 +37,21 @@ export function broadcastNewFile(file: File) {
     });
 }
 
+export function broadcastUpdateFile(file: File) {
+    if (!wss) return;
+
+    const message = JSON.stringify({
+        type: "UPDATE_FILE",
+        payload: file,
+    });
+
+    wss.clients.forEach((client) => {
+        if (client.readyState === WebSocket.OPEN) {
+            client.send(message);
+        }
+    });
+}
+
 export function broadcastDeleteFile(fileId: string) {
     if (!wss) return;
 
