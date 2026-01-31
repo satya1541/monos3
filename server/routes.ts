@@ -140,15 +140,30 @@ export async function registerRoutes(
       }
 
       // 4. Check Download Limit (Skip for previews)
-      if (!isPreview && file.maxDownloads && file.downloadCount >= file.maxDownloads) {
-        return renderErrorPage(res, "Limit Reached", "The maximum download limit for this file has been reached.", 410);
+      if (!isPreview) {
+        if (file.maxDownloads && file.downloadCount >= file.maxDownloads) {
+          return renderErrorPage(res, "Limit Reached", "The maximum download limit for this file has been reached.", 410);
+        }
+
+        // 4b. Check Per-User Download Limit
+        if (file.maxDownloadsPerUser) {
+          if (!req.isAuthenticated()) {
+            return renderErrorPage(res, "Authentication Required", "This file has a per-user download limit and requires you to be logged in.", 401);
+          }
+          const currentUserId = (req.user as any).id;
+          const userDownloadCount = await storage.getUserDownloadCount(file.id, currentUserId);
+          if (userDownloadCount >= file.maxDownloadsPerUser) {
+            return renderErrorPage(res, "Limit Reached", `You have reached your personal download limit for this file (${file.maxDownloadsPerUser}).`, 403);
+          }
+        }
       }
 
       const url = await getPresignedDownloadUrl(file.key, file.name, isPreview);
 
       if (!isPreview) {
         // Increment download count and log IP
-        const updatedFile = await storage.incrementDownloadCount(file.id, req.ip);
+        const currentUserId = req.isAuthenticated() ? (req.user as any).id : undefined;
+        const updatedFile = await storage.incrementDownloadCount(file.id, currentUserId, req.ip);
         broadcastUpdateFile(updatedFile);
       }
 
@@ -190,8 +205,22 @@ export async function registerRoutes(
       }
 
       // 4. Check Download Limit
-      if (!isPreview && file.maxDownloads && file.downloadCount >= file.maxDownloads) {
-        return renderErrorPage(res, "Limit Reached", "The maximum number of downloads for this file has been exceeded.", 410);
+      if (!isPreview) {
+        if (file.maxDownloads && file.downloadCount >= file.maxDownloads) {
+          return renderErrorPage(res, "Limit Reached", "The maximum number of downloads for this file has been exceeded.", 410);
+        }
+
+        // 4b. Check Per-User Download Limit
+        if (file.maxDownloadsPerUser) {
+          if (!req.isAuthenticated()) {
+            return res.redirect(`/login?redirect=${encodeURIComponent(req.originalUrl)}`);
+          }
+          const currentUserId = (req.user as any).id;
+          const userDownloadCount = await storage.getUserDownloadCount(file.id, currentUserId);
+          if (userDownloadCount >= file.maxDownloadsPerUser) {
+            return renderErrorPage(res, "Limit Reached", `You have reached your personal download limit for this file (${file.maxDownloadsPerUser}).`, 403);
+          }
+        }
       }
 
       // 5. Check PIN
@@ -230,8 +259,8 @@ export async function registerRoutes(
       const url = await getPresignedDownloadUrl(file.key, file.name, isPreview);
 
       if (!isPreview) {
-        // Increment download count and log IP
-        const updatedFile = await storage.incrementDownloadCount(file.id, req.ip);
+        const currentUserId = req.isAuthenticated() ? (req.user as any).id : undefined;
+        const updatedFile = await storage.incrementDownloadCount(file.id, currentUserId, req.ip);
         broadcastUpdateFile(updatedFile);
       }
 
@@ -283,15 +312,29 @@ export async function registerRoutes(
       }
 
       // Check Download Limit
-      if (!isPreview && file.maxDownloads && file.downloadCount >= file.maxDownloads) {
-        return renderErrorPage(res, "Limit Reached", "The maximum download limit for this file has been reached.", 410);
+      if (!isPreview) {
+        if (file.maxDownloads && file.downloadCount >= file.maxDownloads) {
+          return renderErrorPage(res, "Limit Reached", "The maximum download limit for this file has been reached.", 410);
+        }
+
+        // Check Per-User Download Limit
+        if (file.maxDownloadsPerUser) {
+          if (!req.isAuthenticated()) {
+            return res.redirect(`/login?redirect=${encodeURIComponent(req.originalUrl)}`);
+          }
+          const currentUserId = (req.user as any).id;
+          const userDownloadCount = await storage.getUserDownloadCount(file.id, currentUserId);
+          if (userDownloadCount >= file.maxDownloadsPerUser) {
+            return renderErrorPage(res, "Limit Reached", `You have reached your personal download limit for this file (${file.maxDownloadsPerUser}).`, 403);
+          }
+        }
       }
 
       const url = await getPresignedDownloadUrl(file.key, file.name, isPreview);
 
       if (!isPreview) {
-        // Increment download count and log IP
-        const updatedFile = await storage.incrementDownloadCount(file.id, req.ip);
+        const currentUserId = req.isAuthenticated() ? (req.user as any).id : undefined;
+        const updatedFile = await storage.incrementDownloadCount(file.id, currentUserId, req.ip);
         broadcastUpdateFile(updatedFile);
       }
 
@@ -486,6 +529,7 @@ export async function registerRoutes(
         userId: req.isAuthenticated() ? (req.user as any).id : null,
         isPrivate: req.body.isPrivate === 'true' || req.body.isPrivate === true,
         expiresAt: req.body.expiresAt ? new Date(req.body.expiresAt) : null,
+        maxDownloadsPerUser: req.body.maxDownloadsPerUser ? parseInt(req.body.maxDownloadsPerUser) : null,
         pin: (req.body.isPrivate === 'true' || req.body.isPrivate === true) ? req.body.pin : null,
       });
 

@@ -10,10 +10,11 @@ export interface IStorage {
   createFile(file: InsertFile): Promise<File>;
   updateFile(id: string, file: Partial<File>): Promise<File | undefined>;
   deleteFile(id: string): Promise<void>;
-  incrementDownloadCount(id: string, ipAddress?: string): Promise<File>;
+  incrementDownloadCount(id: string, userId?: string, ipAddress?: string): Promise<File>;
   addTagsToFile(fileId: string, tagNames: string[]): Promise<void>;
   getFileWithTags(id: string): Promise<File & { tags: string[] }>;
   getFileVersions(id: string): Promise<File[]>;
+  getUserDownloadCount(fileId: string, userId: string): Promise<number>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -134,16 +135,17 @@ export class DatabaseStorage implements IStorage {
     await db.delete(files).where(eq(files.id, id));
   }
 
-  async incrementDownloadCount(fileId: string, ipAddress?: string): Promise<File> {
+  async incrementDownloadCount(fileId: string, userId?: string, ipAddress?: string): Promise<File> {
     await db
       .update(files)
       .set({ downloadCount: sql`${files.downloadCount} + 1` })
       .where(eq(files.id, fileId));
 
-    // Log the download
+    // Log the download with optional userId
     await db.insert(downloadLogs).values({
       id: randomUUID(),
       fileId,
+      userId,
       ipAddress,
     });
 
@@ -216,6 +218,19 @@ export class DatabaseStorage implements IStorage {
 
     // Sort by creation date (newest first)
     return versions.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+  }
+
+  async getUserDownloadCount(fileId: string, userId: string): Promise<number> {
+    const [result] = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(downloadLogs)
+      .where(
+        and(
+          eq(downloadLogs.fileId, fileId),
+          eq(downloadLogs.userId, userId)
+        )
+      );
+    return Number(result?.count || 0);
   }
 }
 

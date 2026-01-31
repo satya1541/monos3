@@ -36,6 +36,7 @@ export const files = mysqlTable("files", {
   isPrivate: boolean("is_private").default(false).notNull(),
   expiresAt: timestamp("expires_at"), // Optional: link expiration
   maxDownloads: int("max_downloads"), // Optional: download limit
+  maxDownloadsPerUser: int("max_downloads_per_user"), // Optional: per-user download limit
   hash: varchar("hash", { length: 64 }), // MD5 or SHA256 hash
   thumbnailUrl: text("thumbnail_url"), // Thumbnail for images/videos
   parentId: varchar("parent_id", { length: 36 }), // For versioning (previous version)
@@ -110,6 +111,7 @@ export const fileTagsRelations = relations(fileTags, ({ one }) => ({
 export const downloadLogs = mysqlTable("download_logs", {
   id: varchar("id", { length: 36 }).primaryKey(),
   fileId: varchar("file_id", { length: 36 }).notNull(),
+  userId: varchar("user_id", { length: 36 }), // User who downloaded
   downloadedAt: timestamp("downloaded_at").defaultNow(),
   ipAddress: varchar("ip_address", { length: 45 }), // IPv6 max length
 }, (table) => [

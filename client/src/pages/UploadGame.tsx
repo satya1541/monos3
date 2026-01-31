@@ -30,12 +30,12 @@ export default function UploadGame() {
     const { toast } = useToast();
     const queryClient = useQueryClient();
     const fileInputRef = useRef<HTMLInputElement>(null);
-    const [selectedFile, setSelectedFile] = useState<File | null>(null);
+    const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
     const [category, setCategory] = useState("");
     const [isDragging, setIsDragging] = useState(false);
     const [isUploading, setIsUploading] = useState(false);
     const [uploadComplete, setUploadComplete] = useState(false);
-    const [progress, setProgress] = useState<UploadProgress | null>(null);
+    const [totalProgress, setTotalProgress] = useState<number>(0);
     const [editingFileId, setEditingFileId] = useState<string | null>(null);
     const [editName, setEditName] = useState("");
     const [deletingFileId, setDeletingFileId] = useState<string | null>(null);
@@ -45,13 +45,14 @@ export default function UploadGame() {
     const [tags, setTags] = useState("");
     const [parentId, setParentId] = useState("");
     const [pin, setPin] = useState("");
+    const [maxDownloadsPerUser, setMaxDownloadsPerUser] = useState("");
 
     // Previous files query
     const { data: previousFiles } = useQuery<UploadedFile[]>({
         queryKey: ["/api/files"],
     });
 
-    const uploadFile = async (file: File, category: string, contentType: string) => {
+    const uploadFile = async (file: File, category: string, contentType: string, onProgress: (loaded: number) => void) => {
         return new Promise((resolve, reject) => {
             // 1. Get Presigned URL
             fetch("/api/upload-url", {
@@ -69,16 +70,7 @@ export default function UploadGame() {
 
                     xhr.upload.addEventListener("progress", (event) => {
                         if (event.lengthComputable) {
-                            const now = Date.now();
-                            const elapsed = (now - startTime) / 1000;
-                            const speed = elapsed > 0 ? event.loaded / elapsed : 0;
-
-                            setProgress({
-                                loaded: event.loaded,
-                                total: event.total,
-                                speed,
-                                percentage: Math.round((event.loaded / event.total) * 100),
-                            });
+                            onProgress(event.loaded);
                         }
                     });
 
@@ -113,6 +105,7 @@ export default function UploadGame() {
                                         isPrivate,
                                         expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
                                         maxDownloads: maxDownloads ? parseInt(maxDownloads) : null,
+                                        maxDownloadsPerUser: maxDownloadsPerUser ? parseInt(maxDownloadsPerUser) : null,
                                         tags: tags.split(",").map(t => t.trim()).filter(Boolean),
                                         parentId: parentId || null,
                                         pin: isPrivate ? pin : null,
@@ -192,24 +185,24 @@ export default function UploadGame() {
     const handleDrop = useCallback((e: React.DragEvent) => {
         e.preventDefault();
         setIsDragging(false);
-        const files = e.dataTransfer.files;
+        const files = Array.from(e.dataTransfer.files);
         if (files.length > 0) {
-            setSelectedFile(files[0]);
+            setSelectedFiles(prev => [...prev, ...files]);
             setUploadComplete(false);
         }
     }, []);
 
     const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const files = e.target.files;
-        if (files && files.length > 0) {
-            setSelectedFile(files[0]);
+        const files = Array.from(e.target.files || []);
+        if (files.length > 0) {
+            setSelectedFiles(prev => [...prev, ...files]);
             setUploadComplete(false);
         }
     };
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!selectedFile) return;
+        if (selectedFiles.length === 0) return;
 
         if (isPrivate && pin && !/^\d{4}$/.test(pin)) {
             toast({ title: "Invalid PIN", description: "PIN must be exactly 4 digits.", variant: "destructive" });
@@ -217,19 +210,31 @@ export default function UploadGame() {
         }
 
         setIsUploading(true);
-        const contentType = selectedFile.type || "application/octet-stream";
-        setProgress({ loaded: 0, total: selectedFile.size, speed: 0, percentage: 0 });
+        setTotalProgress(0);
+
+        const fileProgresses = new Array(selectedFiles.length).fill(0);
+        const totalSize = selectedFiles.reduce((acc, f) => acc + f.size, 0);
 
         try {
-            await uploadFile(selectedFile, category, contentType);
+            const uploadPromises = selectedFiles.map(async (file, index) => {
+                const contentType = file.type || "application/octet-stream";
+                return uploadFile(file, category, contentType, (loaded) => {
+                    fileProgresses[index] = loaded;
+                    const currentTotalLoaded = fileProgresses.reduce((acc, p) => acc + p, 0);
+                    setTotalProgress(Math.round((currentTotalLoaded / totalSize) * 100));
+                });
+            });
+
+            await Promise.all(uploadPromises);
+
             setUploadComplete(true);
-            toast({ title: "Success", description: "File uploaded successfully." });
+            toast({ title: "Success", description: `${selectedFiles.length} files uploaded successfully.` });
             queryClient.invalidateQueries({ queryKey: ["/api/files"] });
 
             setTimeout(() => {
-                setSelectedFile(null);
+                setSelectedFiles([]);
                 setCategory("");
-                setProgress(null);
+                setTotalProgress(0);
                 setUploadComplete(false);
                 setExpiresAt("");
                 setMaxDownloads("");
@@ -237,10 +242,11 @@ export default function UploadGame() {
                 setTags("");
                 setParentId("");
                 setPin("");
+                setMaxDownloadsPerUser("");
             }, 2000);
         } catch (error) {
             console.error(error);
-            toast({ title: "Error", description: "Failed to upload file.", variant: "destructive" });
+            toast({ title: "Error", description: "Failed to upload one or more files.", variant: "destructive" });
         } finally {
             setIsUploading(false);
         }
@@ -301,7 +307,7 @@ export default function UploadGame() {
                         className={`relative border-2 border-dashed rounded-sm p-12 text-center transition-all duration-300 ${isUploading ? "cursor-default" : "cursor-pointer"
                             } ${isDragging
                                 ? "border-white bg-white/5"
-                                : selectedFile
+                                : selectedFiles.length > 0
                                     ? "border-white/40 bg-white/5"
                                     : "border-white/20 hover:border-white/40"
                             }`}
@@ -309,15 +315,16 @@ export default function UploadGame() {
                         <input
                             ref={fileInputRef}
                             type="file"
+                            multiple
                             onChange={handleFileSelect}
                             className="hidden"
                             disabled={isUploading}
                         />
 
                         <AnimatePresence mode="wait">
-                            {selectedFile ? (
+                            {selectedFiles.length > 0 ? (
                                 <motion.div
-                                    key="file-selected"
+                                    key="files-selected"
                                     initial={{ opacity: 0, scale: 0.95 }}
                                     animate={{ opacity: 1, scale: 1 }}
                                     exit={{ opacity: 0, scale: 0.95 }}
@@ -333,12 +340,27 @@ export default function UploadGame() {
                                             <Check className="w-6 h-6 text-black" />
                                         </motion.div>
                                     ) : (
-                                        <FileIcon className="w-10 h-10 opacity-50" />
+                                        <div className="flex -space-x-4 mb-2">
+                                            {selectedFiles.slice(0, 3).map((_, i) => (
+                                                <div key={i} className="w-10 h-10 rounded-sm bg-white/10 border border-white/20 flex items-center justify-center backdrop-blur-sm">
+                                                    <FileIcon className="w-5 h-5 opacity-50" />
+                                                </div>
+                                            ))}
+                                            {selectedFiles.length > 3 && (
+                                                <div className="w-10 h-10 rounded-sm bg-white/20 border border-white/20 flex items-center justify-center backdrop-blur-sm text-[10px] font-bold">
+                                                    +{selectedFiles.length - 3}
+                                                </div>
+                                            )}
+                                        </div>
                                     )}
-                                    <div>
-                                        <p className="font-medium truncate max-w-[250px]">{selectedFile.name}</p>
+                                    <div className="text-center">
+                                        <p className="font-medium">
+                                            {selectedFiles.length === 1
+                                                ? selectedFiles[0].name
+                                                : `${selectedFiles.length} files selected`}
+                                        </p>
                                         <p className="text-xs text-muted-foreground mt-1">
-                                            {formatFileSize(selectedFile.size)}
+                                            {formatFileSize(selectedFiles.reduce((acc, f) => acc + f.size, 0))} Total
                                         </p>
                                     </div>
                                     {!isUploading && !uploadComplete && (
@@ -346,8 +368,8 @@ export default function UploadGame() {
                                             type="button"
                                             onClick={(e) => {
                                                 e.stopPropagation();
-                                                setSelectedFile(null);
-                                                setProgress(null);
+                                                setSelectedFiles([]);
+                                                setTotalProgress(0);
                                             }}
                                             className="absolute top-3 right-3 p-1 hover:bg-white/10 rounded-full transition-colors"
                                         >
@@ -365,7 +387,7 @@ export default function UploadGame() {
                                 >
                                     <Upload className="w-10 h-10" />
                                     <p className="text-sm">Drag & drop or click to select</p>
-                                    <p className="text-xs text-muted-foreground">APK, Video, Image, or any file</p>
+                                    <p className="text-xs text-muted-foreground">Select one or more files to upload</p>
                                 </motion.div>
                             )}
                         </AnimatePresence>
@@ -373,7 +395,7 @@ export default function UploadGame() {
 
                     {/* Progress Bar */}
                     <AnimatePresence>
-                        {progress && isUploading && (
+                        {isUploading && (
                             <motion.div
                                 initial={{ opacity: 0, height: 0 }}
                                 animate={{ opacity: 1, height: "auto" }}
@@ -389,24 +411,24 @@ export default function UploadGame() {
                                     <motion.div
                                         className="absolute inset-y-0 left-0 bg-white"
                                         initial={{ width: 0 }}
-                                        animate={{ width: `${progress.percentage}%` }}
+                                        animate={{ width: `${totalProgress}%` }}
                                         transition={{ duration: 0.3, ease: "easeOut" }}
                                     />
                                     <motion.div
                                         className="absolute inset-y-0 w-8 bg-gradient-to-r from-white to-transparent blur-sm"
-                                        style={{ left: `calc(${progress.percentage}% - 32px)` }}
+                                        style={{ left: `calc(${totalProgress}% - 32px)` }}
                                         animate={{ opacity: [0.5, 1, 0.5] }}
                                         transition={{ duration: 0.8, repeat: Infinity }}
                                     />
                                 </div>
                                 <div className="flex justify-between items-center text-xs text-muted-foreground">
                                     <div className="flex items-center gap-4">
-                                        <span className="font-mono tabular-nums">{progress.percentage}%</span>
+                                        <span className="font-mono tabular-nums">{totalProgress}%</span>
                                         <span className="opacity-50">•</span>
-                                        <span className="font-mono tabular-nums">{formatSpeed(progress.speed)}</span>
+                                        <span className="font-mono tabular-nums">Batch Upload</span>
                                     </div>
                                     <span className="font-mono tabular-nums">
-                                        {formatFileSize(progress.loaded)} / {formatFileSize(progress.total)}
+                                        Processing {selectedFiles.length} files
                                     </span>
                                 </div>
                             </motion.div>
@@ -455,6 +477,21 @@ export default function UploadGame() {
                                 disabled={isUploading}
                             />
                         </div>
+                    </div>
+
+                    <div className="space-y-2">
+                        <Label htmlFor="maxDownloadsPerUser" className="text-xs uppercase tracking-widest opacity-50">
+                            Max Downloads per User (optional)
+                        </Label>
+                        <Input
+                            id="maxDownloadsPerUser"
+                            type="number"
+                            value={maxDownloadsPerUser}
+                            onChange={(e) => setMaxDownloadsPerUser(e.target.value)}
+                            className="bg-transparent border-white/20 rounded-none focus:border-white transition-colors"
+                            placeholder="e.g. 1"
+                            disabled={isUploading}
+                        />
                     </div>
 
                     <div className="space-y-2">
@@ -537,7 +574,7 @@ export default function UploadGame() {
 
                     <Button
                         type="submit"
-                        disabled={!selectedFile || isUploading || uploadComplete}
+                        disabled={selectedFiles.length === 0 || isUploading || uploadComplete}
                         variant="outline"
                         className="w-full border-white/20 hover:border-white hover:bg-white hover:text-black transition-all duration-500 rounded-none py-6 h-auto text-xs uppercase tracking-[0.3em] font-medium disabled:opacity-30"
                     >
@@ -549,11 +586,11 @@ export default function UploadGame() {
                                     animate={{ opacity: [1, 0.5, 1] }}
                                     transition={{ duration: 1, repeat: Infinity }}
                                 >
-                                    Uploading...
+                                    Uploading {selectedFiles.length} files...
                                 </motion.span>
                             </span>
                         ) : (
-                            "Upload File"
+                            selectedFiles.length > 1 ? `Upload ${selectedFiles.length} Files` : "Upload File"
                         )}
                     </Button>
                 </form>

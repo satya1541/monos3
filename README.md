@@ -34,11 +34,15 @@ sequenceDiagram
   - **Private Files**: Restrict access to owners only.
   - **PIN Protection**: Share files securely with a 4-digit PIN requirement.
   - **Auto-Expiration**: Set links to expire after a specific timestamp.
-  - **Download Limits**: Control how many times a file can be accessed.
+  - **Download Limits**: Control global and **Per-User** access counts.
+- **📤 High-Performance Batch Upload**: Select and upload multiple files simultaneously with aggregate progress tracking.
+- **👁️ Advanced In-App Previews**: 
+  - **Code Highlighting**: View source code for `.js`, `.ts`, `.json`, `.sql`, etc.
+  - **PDF Viewer**: Embedded document rendering.
+  - **Enhanced Media**: Premium Audio/Video players with micro-animations.
 - **📜 File Versioning**: Maintain a history of file changes with parent-child relationship tracking.
 - **🏷️ Smart Organization**: Dynamic tagging and categorization (Games, Videos, Documents).
 - **⚡ Real-time Dashboard**: Live updates for file events via WebSockets and visual analytics using Recharts.
-- **🛡️ Presigned Direct Downloads**: Secure, temporary links for downloading files with original filenames.
 
 ---
 

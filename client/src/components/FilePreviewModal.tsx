@@ -1,7 +1,8 @@
 import { type File } from "@shared/schema";
-import { X, Download, ExternalLink } from "lucide-react";
+import { X, Download, ExternalLink, FileText, Music, Play, Pause, Volume2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
+import { useState, useEffect } from "react";
 
 interface FilePreviewModalProps {
     file: File | null;
@@ -9,12 +10,40 @@ interface FilePreviewModalProps {
 }
 
 export function FilePreviewModal({ file, onClose }: FilePreviewModalProps) {
-    if (!file) return null;
+    const [codeContent, setCodeContent] = useState<string | null>(null);
+    const [loadingCode, setLoadingCode] = useState(false);
 
-    const isImage = file.type.startsWith("image/");
-    const isVideo = file.type.startsWith("video/");
-    const isAudio = file.type.startsWith("audio/");
-    const isPdf = file.type === "application/pdf";
+    const isImage = file?.type.startsWith("image/");
+    const isVideo = file?.type.startsWith("video/");
+    const isAudio = file?.type.startsWith("audio/");
+    const isPdf = file?.type === "application/pdf";
+    const isCode = file?.type.startsWith("text/") ||
+        file?.name.endsWith(".js") ||
+        file?.name.endsWith(".ts") ||
+        file?.name.endsWith(".json") ||
+        file?.name.endsWith(".css") ||
+        file?.name.endsWith(".html") ||
+        file?.name.endsWith(".sql");
+
+    useEffect(() => {
+        if (file && isCode) {
+            setLoadingCode(true);
+            fetch(`/api/files/${file.id}/download?preview=true`)
+                .then(res => res.text())
+                .then(text => {
+                    setCodeContent(text);
+                    setLoadingCode(false);
+                })
+                .catch(err => {
+                    console.error("Failed to fetch code content:", err);
+                    setLoadingCode(false);
+                });
+        } else {
+            setCodeContent(null);
+        }
+    }, [file, isCode]);
+
+    if (!file) return null;
 
     const handleDownload = () => {
         window.location.href = `/api/files/${file.id}/download`;
@@ -55,13 +84,64 @@ export function FilePreviewModal({ file, onClose }: FilePreviewModalProps) {
 
         if (isAudio) {
             return (
-                <div className="flex flex-col items-center justify-center py-12 gap-6">
-                    <div className="w-32 h-32 rounded-full bg-white/10 flex items-center justify-center">
-                        <div className="w-16 h-16 rounded-full bg-white/20 animate-pulse" />
+                <div className="flex flex-col items-center justify-center py-20 gap-8 bg-white/5 rounded-sm border border-white/10">
+                    <motion.div
+                        animate={{
+                            scale: [1, 1.1, 1],
+                            rotate: [0, 5, -5, 0]
+                        }}
+                        transition={{
+                            duration: 4,
+                            repeat: Infinity,
+                            ease: "easeInOut"
+                        }}
+                        className="w-40 h-40 rounded-full bg-gradient-to-br from-white/20 to-transparent flex items-center justify-center shadow-2xl"
+                    >
+                        <Music className="w-16 h-16 opacity-50" />
+                    </motion.div>
+
+                    <div className="w-full max-w-md space-y-4">
+                        <div className="flex justify-center gap-1 h-8 items-end">
+                            {[...Array(20)].map((_, i) => (
+                                <motion.div
+                                    key={i}
+                                    animate={{ height: ["20%", "100%", "20%"] }}
+                                    transition={{
+                                        duration: 0.5 + Math.random(),
+                                        repeat: Infinity,
+                                        delay: i * 0.05
+                                    }}
+                                    className="w-1 bg-white/20 rounded-full"
+                                />
+                            ))}
+                        </div>
+                        <audio src={getPreviewUrl()} controls autoPlay className="w-full filter invert hue-rotate-180 opacity-80" />
                     </div>
-                    <audio src={getPreviewUrl()} controls autoPlay className="w-full max-w-md">
-                        Your browser does not support audio playback.
-                    </audio>
+                </div>
+            );
+        }
+
+        if (isCode) {
+            return (
+                <div className="relative bg-[#0d0d0d] rounded-sm border border-white/10 font-mono text-sm overflow-hidden">
+                    <div className="flex items-center justify-between px-4 py-2 border-b border-white/10 bg-white/5">
+                        <span className="text-[10px] uppercase tracking-widest opacity-50 flex items-center gap-2">
+                            <FileText className="w-3 h-3" />
+                            Source Code
+                        </span>
+                        {codeContent && (
+                            <span className="text-[10px] opacity-30">{codeContent.length} characters</span>
+                        )}
+                    </div>
+                    {loadingCode ? (
+                        <div className="p-20 text-center opacity-30 italic">Loading content...</div>
+                    ) : codeContent ? (
+                        <pre className="p-6 overflow-auto max-h-[70vh] text-gray-300 selection:bg-white selection:text-black leading-relaxed">
+                            <code>{codeContent}</code>
+                        </pre>
+                    ) : (
+                        <div className="p-20 text-center opacity-30 italic">No content available</div>
+                    )}
                 </div>
             );
         }
