@@ -14,13 +14,58 @@ export interface IStorage {
   addTagsToFile(fileId: string, tagNames: string[]): Promise<void>;
   getFileWithTags(id: string): Promise<File & { tags: string[] }>;
   getFileVersions(id: string): Promise<File[]>;
+  getLatestVersionFile(id: string): Promise<File | undefined>;
   getUserDownloadCount(fileId: string, userId: string): Promise<number>;
+  getUserStorageUsage(userId: string): Promise<number>;
 }
 
 export class DatabaseStorage implements IStorage {
 
+  private groupAndFilterFiles(files: File[]): File[] {
+    const groups = new Map<string, File>();
+    const childToParent = new Map<string, string>();
+    const rootCache = new Map<string, string>();
+
+    // 1. Build adjacency map
+    files.forEach(f => { if (f.parentId) childToParent.set(f.id, f.parentId); });
+
+    // 2. Optimized findRoot with Path Compression / Memoization
+    const findRoot = (id: string): string => {
+      if (rootCache.has(id)) return rootCache.get(id)!;
+
+      let root = id;
+      const path: string[] = [];
+      let visited = new Set<string>();
+
+      while (childToParent.has(root) && !visited.has(root)) {
+        visited.add(root);
+        path.push(root); // Store path for compression
+        root = childToParent.get(root)!;
+      }
+
+      // Path compression: Point all nodes in path directly to root
+      for (const node of path) {
+        rootCache.set(node, root);
+      }
+      rootCache.set(root, root); // Root points to itself
+
+      return root;
+    };
+
+    // 3. Group by root
+    files.forEach(f => {
+      const rootId = findRoot(f.id);
+      const existing = groups.get(rootId);
+      if (!existing || new Date(f.createdAt || 0) > new Date(existing.createdAt || 0)) {
+        groups.set(rootId, f);
+      }
+    });
+
+    return Array.from(groups.values());
+  }
+
   async getFiles(userId?: string): Promise<File[]> {
-    console.log(`[Storage] Fetching files for userId: ${userId}`);
+
     let allFiles: File[];
 
     if (userId) {
@@ -44,33 +89,9 @@ export class DatabaseStorage implements IStorage {
         .orderBy(files.createdAt);
     }
 
-    console.log(`[Storage] Found ${allFiles.length} raw files`);
 
-    // Grouping logic: Only show the latest version of each group
-    const groups = new Map<string, File>();
-    const childToParent = new Map<string, string>();
-    allFiles.forEach(f => { if (f.parentId) childToParent.set(f.id, f.parentId); });
+    const groupedResult = this.groupAndFilterFiles(allFiles);
 
-    const findRoot = (id: string): string => {
-      let root = id;
-      let visited = new Set<string>();
-      while (childToParent.has(root) && !visited.has(root)) {
-        visited.add(root);
-        root = childToParent.get(root)!;
-      }
-      return root;
-    };
-
-    allFiles.forEach(f => {
-      const rootId = findRoot(f.id);
-      const existing = groups.get(rootId);
-      if (!existing || new Date(f.createdAt || 0) > new Date(existing.createdAt || 0)) {
-        groups.set(rootId, f);
-      }
-    });
-
-    const groupedResult = Array.from(groups.values());
-    console.log(`[Storage] Returning ${groupedResult.length} groups`);
 
     // Sanitize PINs for responses: Remove PIN if not the owner
     return groupedResult.map(f => {
@@ -80,40 +101,16 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getUserFiles(userId: string): Promise<File[]> {
-    console.log(`[Storage] Fetching user-only files for userId: ${userId}`);
+
     const ownFiles = await db
       .select()
       .from(files)
       .where(eq(files.userId, userId))
       .orderBy(files.createdAt);
 
-    console.log(`[Storage] Found ${ownFiles.length} raw user files`);
 
-    // Grouping logic
-    const groups = new Map<string, File>();
-    const childToParent = new Map<string, string>();
-    ownFiles.forEach(f => { if (f.parentId) childToParent.set(f.id, f.parentId); });
+    const groupedResult = this.groupAndFilterFiles(ownFiles);
 
-    const findRoot = (id: string): string => {
-      let root = id;
-      let visited = new Set<string>();
-      while (childToParent.has(root) && !visited.has(root)) {
-        visited.add(root);
-        root = childToParent.get(root)!;
-      }
-      return root;
-    };
-
-    ownFiles.forEach(f => {
-      const rootId = findRoot(f.id);
-      const existing = groups.get(rootId);
-      if (!existing || new Date(f.createdAt || 0) > new Date(existing.createdAt || 0)) {
-        groups.set(rootId, f);
-      }
-    });
-
-    const groupedResult = Array.from(groups.values());
-    console.log(`[Storage] Returning ${groupedResult.length} user groups`);
 
     // Files in this route are owned by the userId passed, so we can return them as is
     return groupedResult.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
@@ -125,14 +122,14 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createFile(insertFile: InsertFile): Promise<File> {
-    console.log(`[Storage] Creating file: ${insertFile.name} | userId: ${insertFile.userId} | isPrivate: ${insertFile.isPrivate}`);
+
     await db.insert(files).values(insertFile);
     const [file] = await db.select().from(files).where(eq(files.id, insertFile.id));
     return file!;
   }
 
   async updateFile(id: string, updates: Partial<File>): Promise<File | undefined> {
-    console.log(`[Storage] Updating file: ${id}`, updates);
+
     await db.update(files).set(updates).where(eq(files.id, id));
     const [updatedFile] = await db.select().from(files).where(eq(files.id, id));
     return updatedFile;
@@ -227,6 +224,11 @@ export class DatabaseStorage implements IStorage {
     return versions.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
   }
 
+  async getLatestVersionFile(id: string): Promise<File | undefined> {
+    const versions = await this.getFileVersions(id);
+    return versions[0]; // versions are already sorted desc by createdAt
+  }
+
   async getUserDownloadCount(fileId: string, userId: string): Promise<number> {
     const [result] = await db
       .select({ count: sql<number>`count(*)` })
@@ -238,6 +240,14 @@ export class DatabaseStorage implements IStorage {
         )
       );
     return Number(result?.count || 0);
+  }
+
+  async getUserStorageUsage(userId: string): Promise<number> {
+    const [result] = await db
+      .select({ totalSize: sql<string>`sum(${files.size})` })
+      .from(files)
+      .where(eq(files.userId, userId));
+    return result?.totalSize ? parseInt(result.totalSize) : 0;
   }
 }
 

@@ -145,13 +145,35 @@ export default function UploadGame() {
             if (!res.ok) throw new Error("Update failed");
             return res.json();
         },
-        onSuccess: () => {
-            toast({ title: "Updated", description: "Filename updated successfully." });
+        onMutate: async ({ id, name }) => {
+            // Cancel any outgoing refetches (so they don't overwrite our optimistic update)
+            await queryClient.cancelQueries({ queryKey: ["/api/files"] });
+
+            // Snapshot the previous value
+            const previousFiles = queryClient.getQueryData<UploadedFile[]>(["/api/files"]);
+
+            // Optimistically update to the new value
+            queryClient.setQueryData<UploadedFile[]>(["/api/files"], (old) => {
+                return old?.map(f => f.id === id ? { ...f, name } : f);
+            });
+
+            // Return a context object with the snapshotted value
+            return { previousFiles };
+        },
+        onError: (err, newFile, context) => {
+            // If the mutation fails, use the context returned from onMutate to roll back
+            if (context?.previousFiles) {
+                queryClient.setQueryData(["/api/files"], context.previousFiles);
+            }
+            toast({ title: "Error", description: "Failed to update filename.", variant: "destructive" });
+        },
+        onSettled: () => {
+            // Always refetch after error or success to ensure we are in sync with server
             setEditingFileId(null);
             queryClient.invalidateQueries({ queryKey: ["/api/files"] });
         },
-        onError: () => {
-            toast({ title: "Error", description: "Failed to update filename.", variant: "destructive" });
+        onSuccess: () => {
+            toast({ title: "Updated", description: "Filename updated successfully." });
         },
     });
 
@@ -162,13 +184,28 @@ export default function UploadGame() {
             });
             if (!res.ok) throw new Error("Delete failed");
         },
-        onSuccess: () => {
-            toast({ title: "Deleted", description: "File deleted successfully." });
+        onMutate: async (id) => {
+            await queryClient.cancelQueries({ queryKey: ["/api/files"] });
+            const previousFiles = queryClient.getQueryData<UploadedFile[]>(["/api/files"]);
+
+            queryClient.setQueryData<UploadedFile[]>(["/api/files"], (old) => {
+                return old?.filter(f => f.id !== id);
+            });
+
+            return { previousFiles };
+        },
+        onError: (err, id, context) => {
+            if (context?.previousFiles) {
+                queryClient.setQueryData(["/api/files"], context.previousFiles);
+            }
+            toast({ title: "Error", description: "Failed to delete file.", variant: "destructive" });
+        },
+        onSettled: () => {
             setDeletingFileId(null);
             queryClient.invalidateQueries({ queryKey: ["/api/files"] });
         },
-        onError: () => {
-            toast({ title: "Error", description: "Failed to delete file.", variant: "destructive" });
+        onSuccess: () => {
+            toast({ title: "Deleted", description: "File deleted successfully." });
         },
     });
 

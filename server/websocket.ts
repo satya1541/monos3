@@ -8,10 +8,10 @@ export function setupWebSocket(server: Server) {
     wss = new WebSocketServer({ server, path: "/ws" });
 
     wss.on("connection", (ws) => {
-        console.log("WebSocket client connected");
+
 
         ws.on("close", () => {
-            console.log("WebSocket client disconnected");
+
         });
 
         ws.on("error", (error) => {
@@ -19,7 +19,7 @@ export function setupWebSocket(server: Server) {
         });
     });
 
-    console.log("WebSocket server initialized on /ws");
+
 }
 
 export function broadcastNewFile(file: File) {

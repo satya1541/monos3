@@ -1,5 +1,7 @@
 import "dotenv/config";
 import express, { type Request, Response, NextFunction } from "express";
+import helmet from "helmet";
+import compression from "compression";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
@@ -27,15 +29,15 @@ app.use(
 
 app.use(express.urlencoded({ extended: false, limit: "50mb" }));
 
-export function log(message: string, source = "express") {
-  const formattedTime = new Date().toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: true,
-  });
+// Security headers
+app.use(helmet({
+  contentSecurityPolicy: false, // Disable CSP for now as it might break inline scripts/styles if not carefully configured
+}));
 
-  console.log(`${formattedTime} [${source}] ${message}`);
+// Compression
+app.use(compression());
+
+export function log(message: string, source = "express") {
 }
 
 app.use((req, res, next) => {
@@ -45,7 +47,6 @@ app.use((req, res, next) => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
       const logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      log(logLine);
     }
   });
 
@@ -95,7 +96,6 @@ app.use((req, res, next) => {
       reusePort: true,
     },
     () => {
-      log(`serving on port ${port}`);
     },
   );
 })();

@@ -2,12 +2,24 @@ import type { Express, Request, Response, NextFunction } from "express";
 import { type Server } from "http";
 import { storage } from "./storage";
 import { getPresignedDownloadUrl, getPresignedUploadUrl, deleteFromS3 } from "./s3";
-import { randomUUID } from "crypto";
+import { randomUUID, timingSafeEqual } from "crypto";
 import { broadcastNewFile, broadcastDeleteFile, broadcastUpdateFile } from "./websocket";
 import { isAuthenticated } from "./auth";
 import { insertFileSchema } from "@shared/schema";
 import { z } from "zod";
 import { createRateLimiter } from "./rate-limit";
+import { MAX_STORAGE_PER_USER_BYTES } from "./constants";
+
+// Helper for constant-time comparison (prevents timing attacks)
+function compare(a: string, b: string): boolean {
+  try {
+    const bufA = Buffer.from(a);
+    const bufB = Buffer.from(b);
+    return bufA.length === bufB.length && timingSafeEqual(bufA, bufB);
+  } catch {
+    return false;
+  }
+}
 
 const pinRateLimiter = createRateLimiter({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -68,7 +80,7 @@ export async function registerRoutes(
   // GET /api/files - List all uploaded files
   app.get("/api/files", async (req, res) => {
     const userId = req.isAuthenticated() ? (req.user as any).id : undefined;
-    console.log(`[API] GET /api/files | userId: ${userId} | authenticated: ${req.isAuthenticated()}`);
+
 
     // Prevent caching of the file list to ensure newly uploaded private files show up
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
@@ -133,54 +145,58 @@ export async function registerRoutes(
         return renderErrorPage(res, "File Not Found", "The file you are looking for does not exist or has been removed.", 404);
       }
 
-      const isOwner = req.isAuthenticated() && (req.user as any).id === file.userId;
+      // 0. Security Policy: Enforce LATEST version's security settings
+      const latestVersion = await storage.getLatestVersionFile(file.id);
+      const securityPolicy = latestVersion || file; // Fallback to file if single version
+
+      const isOwner = req.isAuthenticated() && (req.user as any).id === securityPolicy.userId;
       const isPreview = req.query.preview === 'true';
       const pin = req.query.pin as string;
 
-      console.log(`[Download] ID: ${fileId} | isPrivate: ${file.isPrivate} | hasPin: ${!!file.pin} | isOwner: ${isOwner} | pinProvided: ${!!pin}`);
+
 
       // 1. Strict Security Rule: Prohibit previews for private/PIN-protected files entirely
-      if ((file.isPrivate || file.pin) && isPreview) {
-        console.log(`[Download] Preview blocked for sensitive file`);
+      if ((securityPolicy.isPrivate || securityPolicy.pin) && isPreview) {
+
         return renderErrorPage(res, "Preview Disabled", "Previews are disabled for private/PIN-protected files for enhanced security.", 403);
       }
 
       // 2. Check Privacy & PIN (for downloads/previews)
-      if (file.isPrivate) {
+      if (securityPolicy.isPrivate) {
         if (!isOwner) {
-          if (!file.pin || file.pin !== pin) {
-            console.log(`[Download] Access denied: Private file, wrong/missing PIN`);
+          if (!securityPolicy.pin || !compare(securityPolicy.pin, pin || "")) {
+
             return renderErrorPage(res, "Access Denied", "This file is private and requires a valid PIN for access.", 403);
           }
         }
-      } else if (file.pin && !isOwner) {
+      } else if (securityPolicy.pin && !isOwner) {
         // Not private but has PIN? Enforce it.
-        if (file.pin !== pin) {
-          console.log(`[Download] Access denied: PIN protected file, wrong/missing PIN`);
+        if (!compare(securityPolicy.pin, pin || "")) {
+
           return renderErrorPage(res, "Invalid PIN", "The PIN provided is incorrect or missing. Please check the PIN and try again.", 403);
         }
       }
 
       // 3. Check Expiration
-      if (file.expiresAt && new Date(file.expiresAt).getTime() < Date.now()) {
+      if (securityPolicy.expiresAt && new Date(securityPolicy.expiresAt).getTime() < Date.now()) {
         return renderErrorPage(res, "Link Expired", "This file sharing link has expired and is no longer active.", 410);
       }
 
       // 4. Check Download Limit (Skip for previews)
       if (!isPreview) {
-        if (file.maxDownloads && file.downloadCount >= file.maxDownloads) {
+        if (securityPolicy.maxDownloads && securityPolicy.downloadCount >= securityPolicy.maxDownloads) {
           return renderErrorPage(res, "Limit Reached", "The maximum download limit for this file has been reached.", 410);
         }
 
         // 4b. Check Per-User Download Limit
-        if (file.maxDownloadsPerUser) {
+        if (securityPolicy.maxDownloadsPerUser) {
           if (!req.isAuthenticated()) {
             return renderErrorPage(res, "Authentication Required", "This file has a per-user download limit and requires you to be logged in.", 401);
           }
           const currentUserId = (req.user as any).id;
-          const userDownloadCount = await storage.getUserDownloadCount(file.id, currentUserId);
-          if (userDownloadCount >= file.maxDownloadsPerUser) {
-            return renderErrorPage(res, "Limit Reached", `You have reached your personal download limit for this file (${file.maxDownloadsPerUser}).`, 403);
+          const userDownloadCount = await storage.getUserDownloadCount(securityPolicy.id, currentUserId);
+          if (userDownloadCount >= securityPolicy.maxDownloadsPerUser) {
+            return renderErrorPage(res, "Limit Reached", `You have reached your personal download limit for this file (${securityPolicy.maxDownloadsPerUser}).`, 403);
           }
         }
       }
@@ -211,73 +227,89 @@ export async function registerRoutes(
         return res.status(404).send("File not found");
       }
 
-      const isOwner = req.isAuthenticated() && (req.user as any).id === file.userId;
+      // 0. Security Policy: Enforce LATEST version's security settings
+      const latestVersion = await storage.getLatestVersionFile(file.id);
+      const securityPolicy = latestVersion || file;
+
+      const isOwner = req.isAuthenticated() && (req.user as any).id === securityPolicy.userId;
       const isPreview = req.query.preview === 'true';
       const pin = req.query.pin as string;
 
-      console.log(`[Link] ID: ${fileId} | isPrivate: ${file.isPrivate} | hasPin: ${!!file.pin} | isOwner: ${isOwner} | pinProvided: ${!!pin}`);
+
 
       // 1. Strict Security Rule: Prohibit previews for private/PIN-protected files
-      if ((file.isPrivate || file.pin) && isPreview) {
-        console.log(`[Link] Preview blocked for sensitive file`);
+      if ((securityPolicy.isPrivate || securityPolicy.pin) && isPreview) {
+
         return res.status(403).send("Forbidden: Previews are disabled for private files.");
       }
 
       // 2. Check Expiration
-      if (file.expiresAt && new Date(file.expiresAt).getTime() < Date.now()) {
+      if (securityPolicy.expiresAt && new Date(securityPolicy.expiresAt).getTime() < Date.now()) {
         return renderErrorPage(res, "Link Expired", "This sharing link has reached its expiration date and is no longer active.", 410);
+      }
+
+      // 3. Check and Prompt for PIN
+      const requiresPin = (securityPolicy.isPrivate || securityPolicy.pin) && !isOwner;
+      if (requiresPin) {
+        const pinValid = pin && securityPolicy.pin && compare(securityPolicy.pin, pin);
+
+        if (!pinValid) {
+          // If invalid PIN or no PIN, forbid "private" files entirely if they have no PIN set (shouldn't happen for private files usually?)
+          // Actually storage.ts sanitizes PINs, so safe to check logic here.
+          // If Private and NO PIN set on file? It's just private (Owner only). 
+          if (securityPolicy.isPrivate && !securityPolicy.pin) {
+            return renderErrorPage(res, "Access Denied", "This file is private.", 403);
+          }
+
+          // Render PIN Entry Page
+          return res.send(`
+            <!DOCTYPE html>
+            <html>
+            <head>
+              <title>PIN Required - Mono S3</title>
+              <meta name="viewport" content="width=device-width, initial-scale=1">
+              <style>
+                body { background: #000; color: #fff; font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+                .card { background: #111; padding: 2rem; border: 1px solid #333; max-width: 400px; width: 90%; text-align: center; }
+                h1 { font-family: serif; margin-bottom: 1rem; }
+                input { background: transparent; border: 1px solid #333; color: #fff; padding: 0.8rem; width: 100%; box-sizing: border-box; margin-bottom: 1rem; text-align: center; letter-spacing: 0.5rem; font-size: 1.2rem; }
+                button { background: #fff; color: #000; border: none; padding: 0.8rem 2rem; cursor: pointer; text-transform: uppercase; font-weight: bold; width: 100%; }
+                .error { color: #fecaca; font-size: 0.8rem; margin-top: 1rem; }
+              </style>
+            </head>
+            <body>
+              <div class="card">
+                <h1>PIN Protected</h1>
+                <p style="opacity: 0.5; font-size: 0.9rem; margin-bottom: 2rem;">Enter the 4-digit PIN to access this file.</p>
+                <form method="GET">
+                  <input type="password" name="pin" maxlength="4" placeholder="****" required autofocus>
+                  <button type="submit">Download</button>
+                </form>
+                ${pin ? '<div class="error">Incorrect PIN. Please try again.</div>' : ''}
+              </div>
+            </body>
+            </html>
+          `);
+        }
       }
 
       // 4. Check Download Limit
       if (!isPreview) {
-        if (file.maxDownloads && file.downloadCount >= file.maxDownloads) {
+        if (securityPolicy.maxDownloads && securityPolicy.downloadCount >= securityPolicy.maxDownloads) {
           return renderErrorPage(res, "Limit Reached", "The maximum number of downloads for this file has been exceeded.", 410);
         }
 
         // 4b. Check Per-User Download Limit
-        if (file.maxDownloadsPerUser) {
+        if (securityPolicy.maxDownloadsPerUser) {
           if (!req.isAuthenticated()) {
             return res.redirect(`/login?redirect=${encodeURIComponent(req.originalUrl)}`);
           }
           const currentUserId = (req.user as any).id;
-          const userDownloadCount = await storage.getUserDownloadCount(file.id, currentUserId);
-          if (userDownloadCount >= file.maxDownloadsPerUser) {
-            return renderErrorPage(res, "Limit Reached", `You have reached your personal download limit for this file (${file.maxDownloadsPerUser}).`, 403);
+          const userDownloadCount = await storage.getUserDownloadCount(securityPolicy.id, currentUserId);
+          if (userDownloadCount >= securityPolicy.maxDownloadsPerUser) {
+            return renderErrorPage(res, "Limit Reached", `You have reached your personal download limit for this file (${securityPolicy.maxDownloadsPerUser}).`, 403);
           }
         }
-      }
-
-      // 5. Check PIN
-      if (file.pin && file.pin !== pin && !isOwner) {
-        // Render simple PIN entry page
-        return res.send(`
-          <!DOCTYPE html>
-          <html>
-          <head>
-            <title>PIN Required - Mono S3</title>
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <style>
-              body { background: #000; color: #fff; font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-              .card { background: #111; padding: 2rem; border: 1px solid #333; max-width: 400px; width: 90%; text-align: center; }
-              h1 { font-family: serif; margin-bottom: 1rem; }
-              input { background: transparent; border: 1px solid #333; color: #fff; padding: 0.8rem; width: 100%; box-sizing: border-box; margin-bottom: 1rem; text-align: center; letter-spacing: 0.5rem; font-size: 1.2rem; }
-              button { background: #fff; color: #000; border: none; padding: 0.8rem 2rem; cursor: pointer; text-transform: uppercase; font-weight: bold; width: 100%; }
-              .error { color: #fecaca; font-size: 0.8rem; margin-top: 1rem; }
-            </style>
-          </head>
-          <body>
-            <div class="card">
-              <h1>PIN Protected</h1>
-              <p style="opacity: 0.5; font-size: 0.9rem; margin-bottom: 2rem;">Enter the 4-digit PIN to access this file.</p>
-              <form method="GET">
-                <input type="password" name="pin" maxlength="4" placeholder="****" required autofocus>
-                <button type="submit">Download</button>
-              </form>
-              ${pin ? '<div class="error">Incorrect PIN. Please try again.</div>' : ''}
-            </div>
-          </body>
-          </html>
-        `);
       }
 
       const url = await getPresignedDownloadUrl(file.key, file.name, isPreview);
@@ -305,61 +337,65 @@ export async function registerRoutes(
         return renderErrorPage(res, "File Not Found", "The file you are looking for does not exist or has been removed.", 404);
       }
 
-      const isOwner = req.isAuthenticated() && (req.user as any).id === file.userId;
+      // 0. Security Policy: Enforce LATEST version's security settings
+      const latestVersion = await storage.getLatestVersionFile(file.id);
+      const securityPolicy = latestVersion || file;
+
+      const isOwner = req.isAuthenticated() && (req.user as any).id === securityPolicy.userId;
       const isPreview = req.query.preview === 'true';
       const pin = req.query.pin as string;
 
-      console.log(`[LinkFilename] ID: ${fileId} | isPrivate: ${file.isPrivate} | hasPin: ${!!file.pin} | isOwner: ${isOwner} | pinProvided: ${!!pin}`);
+
 
       // 1. Strict Security Rule: Prohibit previews for private/PIN-protected files
-      if ((file.isPrivate || file.pin) && isPreview) {
+      if ((securityPolicy.isPrivate || securityPolicy.pin) && isPreview) {
         return renderErrorPage(res, "Preview Disabled", "Previews are disabled for private/PIN-protected files.", 403);
       }
 
       // 2. Apply the same security logic
-      if (file.isPrivate) {
+      if (securityPolicy.isPrivate) {
         if (!isOwner) {
-          if (!file.pin || file.pin !== pin) {
+          if (!securityPolicy.pin || !compare(securityPolicy.pin, pin || "")) {
             // If has PIN but not provided, redirect to pin entry page
-            if (file.pin && !pin) {
-              console.log(`[LinkFilename] Redirecting to PIN entry`);
+            if (securityPolicy.pin && !pin) {
+
               return res.redirect(`/link/${file.id}`);
             }
-            console.log(`[LinkFilename] Access denied: Private file, wrong/missing PIN`);
+
             return renderErrorPage(res, "Access Denied", "This file is private and requires a valid PIN for access.", 403);
           }
         }
-      } else if (file.pin && !isOwner) {
-        if (file.pin !== pin) {
+      } else if (securityPolicy.pin && !isOwner) {
+        if (!compare(securityPolicy.pin, pin || "")) {
           if (!pin) {
-            console.log(`[LinkFilename] Redirecting to PIN entry`);
+
             return res.redirect(`/link/${file.id}`);
           }
-          console.log(`[LinkFilename] Access denied: PIN protected file, wrong/missing PIN`);
+
           return renderErrorPage(res, "Invalid PIN", "The PIN provided is incorrect. Please check the PIN and try again.", 403);
         }
       }
 
       // Check Expiration
-      if (file.expiresAt && new Date(file.expiresAt).getTime() < Date.now()) {
+      if (securityPolicy.expiresAt && new Date(securityPolicy.expiresAt).getTime() < Date.now()) {
         return renderErrorPage(res, "Link Expired", "This file sharing link has expired.", 410);
       }
 
       // Check Download Limit
       if (!isPreview) {
-        if (file.maxDownloads && file.downloadCount >= file.maxDownloads) {
+        if (securityPolicy.maxDownloads && securityPolicy.downloadCount >= securityPolicy.maxDownloads) {
           return renderErrorPage(res, "Limit Reached", "The maximum download limit for this file has been reached.", 410);
         }
 
         // Check Per-User Download Limit
-        if (file.maxDownloadsPerUser) {
+        if (securityPolicy.maxDownloadsPerUser) {
           if (!req.isAuthenticated()) {
             return res.redirect(`/login?redirect=${encodeURIComponent(req.originalUrl)}`);
           }
           const currentUserId = (req.user as any).id;
-          const userDownloadCount = await storage.getUserDownloadCount(file.id, currentUserId);
-          if (userDownloadCount >= file.maxDownloadsPerUser) {
-            return renderErrorPage(res, "Limit Reached", `You have reached your personal download limit for this file (${file.maxDownloadsPerUser}).`, 403);
+          const userDownloadCount = await storage.getUserDownloadCount(securityPolicy.id, currentUserId);
+          if (userDownloadCount >= securityPolicy.maxDownloadsPerUser) {
+            return renderErrorPage(res, "Limit Reached", `You have reached your personal download limit for this file (${securityPolicy.maxDownloadsPerUser}).`, 403);
           }
         }
       }
@@ -379,9 +415,10 @@ export async function registerRoutes(
     }
   });
 
+
   // GET /api/files/bulk - Debug to find who is calling this
   app.get("/api/files/bulk", (req, res) => {
-    console.log(`[DEBUG] GET /api/files/bulk | referer: ${req.headers.referer} | user-agent: ${req.headers['user-agent']}`);
+
     res.status(404).json({ error: "Bulk GET not supported" });
   });
 
@@ -536,12 +573,16 @@ export async function registerRoutes(
   });
 
   // POST /api/upload-url - Get presigned URL for direct upload
-  app.post("/api/upload-url", async (req, res) => {
+  app.post("/api/upload-url", isAuthenticated, async (req, res) => {
     try {
       const result = uploadUrlSchema.safeParse(req.body);
       if (!result.success) {
         return res.status(400).json({ error: "Invalid request data", details: result.error.format() });
       }
+
+      const userId = (req.user as any).id;
+      // Storage limit check removed per user request
+
       const { filename, type } = result.data;
 
       const id = randomUUID();
@@ -560,7 +601,7 @@ export async function registerRoutes(
   // POST /api/files - Save metadata (Direct Upload Sync)
   app.post("/api/files", isAuthenticated, async (req, res) => {
     try {
-      console.log(`[API] Metadata sync START | isPrivate: ${req.body.isPrivate} | userId in body: ${req.body.userId} | auth: ${req.isAuthenticated()} | userObj: ${JSON.stringify(req.user)}`);
+
 
       const result = insertFileSchema.safeParse({
         ...req.body,
@@ -573,10 +614,22 @@ export async function registerRoutes(
         pin: req.body.pin ? req.body.pin : null,
       });
 
-      console.log(`[API] Metadata sync PARSED | userId: ${result.success ? result.data.userId : 'parse failed'}`);
+
 
       if (!result.success) {
         return res.status(400).json({ error: "Invalid file metadata", details: result.error.format() });
+      }
+
+      // Security Check: Version Injection Prevention
+      if (result.data.parentId) {
+        const parentFile = await storage.getFile(result.data.parentId);
+        if (!parentFile) {
+          return res.status(404).json({ error: "Parent file not found" });
+        }
+        if (req.isAuthenticated() && parentFile.userId !== (req.user as any).id) {
+          console.warn(`[Security] Version Injection Attempt detected! User ${(req.user as any).id} tried to append to parent ${parentFile.id}`);
+          return res.status(403).json({ error: "You cannot add a version to a file you do not own." });
+        }
       }
 
       const file = await storage.createFile(result.data);

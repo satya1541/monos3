@@ -1,16 +1,17 @@
-import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type File } from "@shared/schema";
-import { Download, FileIcon, FileVideo, FileImage, FileText, Package, Loader2, Copy, Check, Search, Eye, Trash2, FolderEdit, Lock, History, Clock } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Download, FileIcon, FileVideo, FileImage, FileText, Package, Copy, Check, Search, Eye, Lock, History, Clock } from "lucide-react";
+import { useEffect, useState, memo } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/AuthProvider";
 import { Navigation } from "@/components/Navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
+import { Grid } from "react-window";
+import { AutoSizer } from "react-virtualized-auto-sizer";
 import { FilePreviewModal } from "@/components/FilePreviewModal";
 import {
     AlertDialog,
@@ -22,13 +23,6 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from "@/components/ui/select";
 
 const getFileIcon = (type: string) => {
     if (type.startsWith("video/")) return FileVideo;
@@ -45,9 +39,110 @@ const formatFileSize = (bytes: number) => {
     return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 };
 
+// Virtualized Cell Component
+const Cell = ({ columnIndex, rowIndex, style, ...data }: any) => {
+    const { files, columnCount, gutter, handleCopyLink, setVersionFileId, setPreviewFile, setDownloadFile, copiedId } = data;
+    const index = rowIndex * columnCount + columnIndex;
+    const file = files[index];
+
+    if (!file) return null;
+
+    const Icon = getFileIcon(file.type);
+
+    return (
+        <div style={{
+            ...style,
+            left: (style.left as number) + gutter / 2,
+            top: (style.top as number) + gutter / 2,
+            width: (style.width as number) - gutter,
+            height: (style.height as number) - gutter,
+        }}>
+            <div className="group relative border border-white/10 rounded-sm p-4 md:p-6 transition-all duration-300 hover:bg-white/5 hover:border-white/30 h-full overflow-hidden">
+                <div className="flex items-start gap-4 pr-12 md:pr-32">
+                    <div className="p-3 bg-white/5 rounded-sm group-hover:bg-white/10 transition-colors">
+                        <Icon className="w-6 h-6 opacity-70" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                        <h3 className="font-medium truncate mb-1 text-sm md:text-base" title={file.name}>
+                            {file.name}
+                        </h3>
+                        <div className="flex flex-wrap items-center gap-2 text-[10px] md:text-xs text-muted-foreground">
+                            <span>{formatFileSize(file.size)}</span>
+                            {file.category && (
+                                <>
+                                    <span className="opacity-30">•</span>
+                                    <span className="uppercase tracking-widest opacity-70">{file.category}</span>
+                                </>
+                            )}
+                            <span className="opacity-30">•</span>
+                            <span className="opacity-70">{file.downloadCount} downloads</span>
+
+                            {file.isPrivate && (
+                                <Badge variant="outline" className="text-[9px] h-4 border-white/20 px-1 py-0 uppercase tracking-tighter ml-1">
+                                    <Lock className="w-2 h-2 mr-1" /> Private
+                                </Badge>
+                            )}
+
+                            {file.pin && (
+                                <Badge variant="outline" className="text-[9px] h-4 border-white/20 px-1 py-0 uppercase tracking-tighter ml-1">
+                                    <Check className="w-2 h-2 mr-1" /> PIN Protected
+                                </Badge>
+                            )}
+                        </div>
+                    </div>
+                </div>
+
+                <div className="absolute top-4 right-4 flex gap-1 opacity-0 group-hover:opacity-100 transition-all duration-300 translate-y-[-4px] group-hover:translate-y-0">
+                    <Button
+                        onClick={() => setVersionFileId(file.id)}
+                        variant="outline"
+                        size="icon"
+                        className="h-8 w-8 border-white/10 hover:border-white hover:bg-white hover:text-black rounded-sm transition-all duration-300 bg-black/40 backdrop-blur-sm"
+                        title="Version History"
+                    >
+                        <History className="w-4 h-4" />
+                    </Button>
+                    {(!file.isPrivate && !file.pin) && (
+                        <Button
+                            onClick={() => setPreviewFile(file)}
+                            variant="outline"
+                            size="icon"
+                            className="h-8 w-8 border-white/10 hover:border-white hover:bg-white hover:text-black rounded-sm transition-all duration-300 bg-black/40 backdrop-blur-sm"
+                            title="Preview"
+                        >
+                            <Eye className="w-4 h-4" />
+                        </Button>
+                    )}
+                    <Button
+                        onClick={() => handleCopyLink(file)}
+                        variant="outline"
+                        size="icon"
+                        className="h-8 w-8 border-white/10 hover:border-white hover:bg-white hover:text-black rounded-sm transition-all duration-300 bg-black/40 backdrop-blur-sm"
+                        title="Copy Link"
+                    >
+                        {copiedId === file.id ? (
+                            <Check className="w-4 h-4" />
+                        ) : (
+                            <Copy className="w-4 h-4" />
+                        )}
+                    </Button>
+                    <Button
+                        onClick={() => setDownloadFile(file)}
+                        variant="outline"
+                        size="icon"
+                        className="h-8 w-8 border-white/10 hover:border-white hover:bg-white hover:text-black rounded-sm transition-all duration-300 bg-black/40 backdrop-blur-sm"
+                        title="Download"
+                    >
+                        <Download className="w-4 h-4" />
+                    </Button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 export default function Games() {
     const { toast } = useToast();
-    const { user } = useAuth();
     const queryClient = useQueryClient();
     const [copiedId, setCopiedId] = useState<string | null>(null);
     const [downloadFile, setDownloadFile] = useState<File | null>(null);
@@ -74,13 +169,11 @@ export default function Games() {
             const message = JSON.parse(event.data);
             if (message.type === "NEW_FILE") {
                 const newFile = message.payload;
-
                 queryClient.setQueryData<File[]>(["/api/files"], (oldFiles) => {
                     if (!oldFiles) return [newFile];
                     if (oldFiles.some(f => f.id === newFile.id)) return oldFiles;
                     return [newFile, ...oldFiles];
                 });
-
                 toast({
                     title: "New File Uploaded",
                     description: `${newFile.name} was just added.`,
@@ -99,34 +192,27 @@ export default function Games() {
             }
         };
 
-        return () => {
-            socket.close();
-        };
+        return () => socket.close();
     }, [queryClient, toast]);
 
     const handleCopyLink = (file: File) => {
         const url = `${window.location.protocol}//${window.location.host}/link/${file.id}/${encodeURIComponent(file.name)}`;
         navigator.clipboard.writeText(url);
         setCopiedId(file.id);
-        toast({
-            title: "Link Copied",
-            description: "Shareable link copied to clipboard.",
-        });
+        toast({ title: "Link Copied", description: "Shareable link copied to clipboard." });
         setTimeout(() => setCopiedId(null), 2000);
     };
 
-
-    const filteredFiles = files?.filter(file => {
-        const matchesSearch = file.name.toLowerCase().includes(searchQuery.toLowerCase());
-        return matchesSearch;
-    });
+    const filteredFiles = files?.filter(file =>
+        file.name.toLowerCase().includes(searchQuery.toLowerCase())
+    );
 
     return (
         <div className="min-h-screen bg-black text-white selection:bg-white selection:text-black">
             <Navigation />
 
-            <div className="container mx-auto px-4 py-24 md:py-32">
-                <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-12 gap-6">
+            <div className="container mx-auto px-4 py-24 md:py-32 h-screen flex flex-col">
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-12 gap-6 flex-shrink-0">
                     <motion.div
                         initial={{ opacity: 0, x: -20 }}
                         animate={{ opacity: 1, x: 0 }}
@@ -146,126 +232,49 @@ export default function Games() {
                     </motion.div>
                 </div>
 
-                {isLoading ? (
-                    <div className="flex justify-center py-20">
-                        <Loader2 className="w-8 h-8 animate-spin opacity-50" />
-                    </div>
-                ) : filteredFiles && filteredFiles.length > 0 ? (
-                    <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        transition={{ duration: 0.5, delay: 0.3 }}
-                        className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"
-                    >
-                        {filteredFiles.map((file, index) => {
-                            const Icon = getFileIcon(file.type);
-                            return (
-                                <motion.div
-                                    key={file.id}
-                                    initial={{ opacity: 0, y: 20 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    transition={{ duration: 0.4, delay: index * 0.05 }}
-                                    className="group relative border border-white/10 rounded-sm p-4 md:p-6 transition-all duration-300 hover:bg-white/5 hover:border-white/30"
-                                >
-                                    <div className="flex items-start gap-4 pr-32">
-                                        <div className="p-3 bg-white/5 rounded-sm group-hover:bg-white/10 transition-colors">
-                                            <Icon className="w-6 h-6 opacity-70" />
-                                        </div>
-                                        <div className="flex-1 min-w-0">
-                                            <h3 className="font-medium truncate mb-1" title={file.name}>
-                                                {file.name}
-                                            </h3>
-                                            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                                                <span>{formatFileSize(file.size)}</span>
-                                                {file.category && (
-                                                    <>
-                                                        <span className="opacity-30">•</span>
-                                                        <span className="uppercase tracking-widest opacity-70">{file.category}</span>
-                                                    </>
-                                                )}
-                                                <span className="opacity-30">•</span>
-                                                <span className="opacity-70">{file.downloadCount} ds</span>
+                <div className="flex-1 min-h-0">
+                    {filteredFiles && filteredFiles.length > 0 ? (
+                        <AutoSizer
+                            renderProp={({ height, width }: { height: number | undefined; width: number | undefined }) => {
+                                if (!height || !width) return null;
+                                const columnCount = width < 768 ? 1 : width < 1024 ? 2 : 3;
+                                const rowCount = Math.ceil(filteredFiles.length / columnCount);
+                                const gutter = 24;
+                                const columnWidth = (width - gutter) / columnCount;
+                                const rowHeight = 180;
 
-                                                {file.isPrivate && (
-                                                    <Badge variant="outline" className="text-[9px] h-4 border-white/20 px-1 py-0 uppercase tracking-tighter ml-1">
-                                                        <Lock className="w-2 h-2 mr-1" /> Private
-                                                    </Badge>
-                                                )}
-
-                                                {file.pin && (
-                                                    <Badge variant="outline" className="text-[9px] h-4 border-white/20 px-1 py-0 uppercase tracking-tighter ml-1">
-                                                        <Check className="w-2 h-2 mr-1" /> PIN Protected
-                                                    </Badge>
-                                                )}
-
-                                                {file.expiresAt && new Date(file.expiresAt).getTime() < Date.now() && (
-                                                    <Badge variant="destructive" className="text-[9px] h-4 px-1 py-0 uppercase tracking-tighter">
-                                                        Expired
-                                                    </Badge>
-                                                )}
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <div className="absolute top-4 right-4 flex gap-1 opacity-0 group-hover:opacity-100 transition-all duration-300 translate-y-[-4px] group-hover:translate-y-0">
-                                        <Button
-                                            onClick={() => setVersionFileId(file.id)}
-                                            variant="outline"
-                                            size="icon"
-                                            className="h-8 w-8 border-white/10 hover:border-white hover:bg-white hover:text-black rounded-sm transition-all duration-300 bg-black/40 backdrop-blur-sm"
-                                            title="Version History"
-                                        >
-                                            <History className="w-4 h-4" />
-                                        </Button>
-                                        {(!file.isPrivate && !file.pin) && (
-                                            <Button
-                                                onClick={() => setPreviewFile(file)}
-                                                variant="outline"
-                                                size="icon"
-                                                className="h-8 w-8 border-white/10 hover:border-white hover:bg-white hover:text-black rounded-sm transition-all duration-300 bg-black/40 backdrop-blur-sm"
-                                                title="Preview"
-                                            >
-                                                <Eye className="w-4 h-4" />
-                                            </Button>
-                                        )}
-                                        <Button
-                                            onClick={() => handleCopyLink(file)}
-                                            variant="outline"
-                                            size="icon"
-                                            className="h-8 w-8 border-white/10 hover:border-white hover:bg-white hover:text-black rounded-sm transition-all duration-300 bg-black/40 backdrop-blur-sm"
-                                            title="Copy Link"
-                                        >
-                                            {copiedId === file.id ? (
-                                                <Check className="w-4 h-4" />
-                                            ) : (
-                                                <Copy className="w-4 h-4" />
-                                            )}
-                                        </Button>
-                                        <Button
-                                            onClick={() => setDownloadFile(file)}
-                                            variant="outline"
-                                            size="icon"
-                                            className="h-8 w-8 border-white/10 hover:border-white hover:bg-white hover:text-black rounded-sm transition-all duration-300 bg-black/40 backdrop-blur-sm"
-                                            title="Download"
-                                        >
-                                            <Download className="w-4 h-4" />
-                                        </Button>
-                                    </div>
-                                </motion.div>
-                            );
-                        })}
-                    </motion.div>
-                ) : (
-                    <div className="text-center py-20 opacity-30">
-                        <p className="tracking-widest uppercase text-xs">No files found</p>
-                    </div>
-                )}
+                                return (
+                                    <Grid
+                                        cellComponent={Cell}
+                                        cellProps={{
+                                            files: filteredFiles,
+                                            columnCount,
+                                            gutter,
+                                            handleCopyLink,
+                                            setVersionFileId,
+                                            setPreviewFile,
+                                            setDownloadFile,
+                                            copiedId
+                                        }}
+                                        columnCount={columnCount}
+                                        columnWidth={columnWidth + gutter / columnCount}
+                                        rowCount={rowCount}
+                                        rowHeight={rowHeight + gutter}
+                                        style={{ height, width }}
+                                    />
+                                );
+                            }}
+                        />
+                    ) : (
+                        <div className="text-center py-20 opacity-30">
+                            <p className="tracking-widest uppercase text-xs">No files found</p>
+                        </div>
+                    )}
+                </div>
             </div>
 
-            {/* File Preview Modal */}
             <FilePreviewModal file={previewFile} onClose={() => setPreviewFile(null)} />
 
-            {/* Download Confirmation Dialog */}
             <AlertDialog open={!!downloadFile} onOpenChange={() => setDownloadFile(null)}>
                 <AlertDialogContent className="bg-zinc-950 border-white/10 text-white">
                     <AlertDialogHeader>
@@ -278,9 +287,7 @@ export default function Games() {
                     </AlertDialogHeader>
                     {downloadFile?.pin && (
                         <div className="py-4 space-y-2">
-                            <Label htmlFor="pin" className="text-xs uppercase tracking-widest opacity-50">
-                                Enter 4-Digit PIN
-                            </Label>
+                            <Label htmlFor="pin" className="text-xs uppercase tracking-widest opacity-50">Enter 4-Digit PIN</Label>
                             <Input
                                 id="pin"
                                 type="password"
@@ -294,12 +301,7 @@ export default function Games() {
                         </div>
                     )}
                     <AlertDialogFooter>
-                        <AlertDialogCancel
-                            className="border-white/10 hover:bg-white/10 hover:text-white rounded-sm"
-                            onClick={() => setPinInput("")}
-                        >
-                            Cancel
-                        </AlertDialogCancel>
+                        <AlertDialogCancel className="border-white/10 hover:bg-white/10 hover:text-white rounded-sm" onClick={() => setPinInput("")}>Cancel</AlertDialogCancel>
                         <AlertDialogAction
                             className="bg-white text-black hover:bg-white/90 rounded-sm"
                             disabled={!!(downloadFile?.pin && pinInput.length !== 4)}
@@ -311,10 +313,6 @@ export default function Games() {
                                     }
                                     const pinParam = downloadFile.pin ? `?pin=${pinInput}` : "";
                                     window.location.href = `/api/files/${downloadFile.id}/download${pinParam}`;
-                                    toast({
-                                        title: "Download Started",
-                                        description: `Preparing ${downloadFile.name}...`,
-                                    });
                                 }
                                 setDownloadFile(null);
                                 setPinInput("");
@@ -326,7 +324,6 @@ export default function Games() {
                 </AlertDialogContent>
             </AlertDialog>
 
-            {/* Versions Dialog */}
             <AlertDialog open={!!versionFileId} onOpenChange={() => setVersionFileId(null)}>
                 <AlertDialogContent className="bg-zinc-950 border-white/10 text-white max-w-2xl">
                     <AlertDialogHeader>
@@ -334,9 +331,7 @@ export default function Games() {
                             <History className="w-5 h-5" />
                             Version History
                         </AlertDialogTitle>
-                        <AlertDialogDescription className="text-zinc-400">
-                            Previous versions and history for this file.
-                        </AlertDialogDescription>
+                        <AlertDialogDescription className="text-zinc-400">Previous versions and history for this file.</AlertDialogDescription>
                     </AlertDialogHeader>
                     <div className="py-4 space-y-4 max-h-[50vh] overflow-y-auto">
                         {versions && versions.length > 0 ? (
@@ -357,11 +352,17 @@ export default function Games() {
                                         variant="ghost"
                                         className="h-8 hover:bg-white hover:text-black"
                                         onClick={() => {
-                                            window.location.href = `/api/files/${v.id}/download`;
-                                            toast({
-                                                title: "Download Started",
-                                                description: `Preparing version v${versions.length - i} of ${v.name}...`,
-                                            });
+                                            const parentFile = files?.find(f => f.id === versionFileId);
+                                            if (parentFile && (parentFile.pin || parentFile.isPrivate)) {
+                                                setDownloadFile({
+                                                    ...v,
+                                                    pin: parentFile.pin,
+                                                    isPrivate: parentFile.isPrivate
+                                                });
+                                                setVersionFileId(null);
+                                            } else {
+                                                window.location.href = `/api/files/${v.id}/download`;
+                                            }
                                         }}
                                     >
                                         Download

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { motion, AnimatePresence } from "framer-motion";
-import { Loader2, User, Lock, UserPlus } from "lucide-react";
+import { User, Lock, UserPlus } from "lucide-react";
 import streetBg from "@/assets/street.png";
 
 export default function Login() {
@@ -35,11 +35,7 @@ export default function Login() {
     };
 
     if (authLoading) {
-        return (
-            <div className="min-h-screen bg-black flex items-center justify-center">
-                <Loader2 className="w-8 h-8 animate-spin text-white/50" />
-            </div>
-        );
+        return null;
     }
 
     return (
@@ -165,7 +161,7 @@ export default function Login() {
                         className="w-full border-white/20 hover:border-white hover:bg-white hover:text-black transition-all duration-500 rounded-none py-6 h-auto text-xs uppercase tracking-[0.3em] font-black disabled:opacity-30"
                     >
                         {isSubmitting ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
+                            mode === "login" ? "Signing In..." : "Creating Account..."
                         ) : mode === "login" ? (
                             "Sign In"
                         ) : (

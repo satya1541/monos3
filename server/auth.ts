@@ -61,7 +61,10 @@ passport.deserializeUser(async (id: string, done) => {
 // Setup authentication middleware
 export function setupAuth(app: Express) {
     // Required for secure cookies behind a proxy (like Replit, Heroku, Nginx)
-    app.set("trust proxy", 1);
+    // Only trust proxy in production to prevent rate-limit bypass in direct deployments
+    if (env.NODE_ENV === "production") {
+        app.set("trust proxy", 1);
+    }
 
     // Session configuration
     app.use(
@@ -73,6 +76,7 @@ export function setupAuth(app: Express) {
                 secure: env.NODE_ENV === "production",
                 httpOnly: true,
                 maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+                sameSite: "lax",
             },
         })
     );

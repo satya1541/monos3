@@ -4,7 +4,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { AuthProvider, useAuth } from "@/lib/AuthProvider";
 import { ThemeProvider } from "@/lib/ThemeProvider";
-import { Loader2 } from "lucide-react";
+
 import Home from "@/pages/Home";
 import Games from "@/pages/Games";
 import About from "@/pages/About";
@@ -19,11 +19,7 @@ function ProtectedRoute({ component: Component }: { component: React.ComponentTy
   const [, setLocation] = useLocation();
 
   if (isLoading) {
-    return (
-      <div className="min-h-screen bg-black flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-white/50" />
-      </div>
-    );
+    return null;
   }
 
   if (!user) {
@@ -36,15 +32,6 @@ function ProtectedRoute({ component: Component }: { component: React.ComponentTy
 
 function Router() {
   const { user, isLoading } = useAuth();
-
-  // Show loading while checking auth
-  if (isLoading) {
-    return (
-      <div className="min-h-screen bg-black flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-white/50" />
-      </div>
-    );
-  }
 
   return (
     <Switch>

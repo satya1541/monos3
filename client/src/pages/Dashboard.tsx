@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Navigation } from "@/components/Navigation";
 import { motion } from "framer-motion";
-import { Loader2, FileStack, HardDrive, Download, TrendingUp, Clock } from "lucide-react";
+import { FileStack, HardDrive, Download, TrendingUp, Clock } from "lucide-react";
 import { Link } from "wouter";
 
 interface DashboardStats {
@@ -51,11 +51,7 @@ export default function Dashboard() {
                     <div className="h-px w-12 bg-white/20 mx-auto" />
                 </motion.div>
 
-                {isLoading ? (
-                    <div className="flex justify-center py-20">
-                        <Loader2 className="w-8 h-8 animate-spin opacity-50" />
-                    </div>
-                ) : stats ? (
+                {stats ? (
                     <div className="space-y-12">
                         {/* Stats Grid */}
                         <motion.div

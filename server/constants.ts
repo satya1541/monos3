@@ -1,0 +1,2 @@
+export const MAX_STORAGE_PER_USER_BYTES = 1024 * 1024 * 1024; // 1 GB
+export const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024; // 50 MB

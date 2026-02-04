@@ -24,6 +24,15 @@ export async function getPresignedDownloadUrl(
     filename?: string,
     inline: boolean = false
 ): Promise<string> {
+    // Security: Force attachment for risky file types to prevent Stored XSS
+    // Even if 'inline' is requested (e.g. for preview), we must not serve HTML/SVG inline
+    if (filename && inline) {
+        const ext = filename.split('.').pop()?.toLowerCase();
+        if (ext && ['html', 'htm', 'svg', 'xml', 'xhtml'].includes(ext)) {
+            inline = false;
+        }
+    }
+
     const command = new GetObjectCommand({
         Bucket: BUCKET_NAME,
         Key: key,

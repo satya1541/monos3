@@ -134,7 +134,7 @@ export function FilePreviewModal({ file, onClose }: FilePreviewModalProps) {
                         )}
                     </div>
                     {loadingCode ? (
-                        <div className="p-20 text-center opacity-30 italic">Loading content...</div>
+                        null
                     ) : codeContent ? (
                         <pre className="p-6 overflow-auto max-h-[70vh] text-gray-300 selection:bg-white selection:text-black leading-relaxed">
                             <code>{codeContent}</code>
