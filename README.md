@@ -30,12 +30,17 @@ sequenceDiagram
 
 ## ✨ Key Features
 
-- **🔐 Enterprise-Grade Security**:
+- **🔐 Hardened Security**:
   - **Private Files**: Restrict access to owners only.
-  - **PIN Protection**: Share files securely with a 4-digit PIN requirement.
+  - **PIN Protection**: Share files securely with a 4-digit PIN requirement (constant-time verification).
+  - **Rate Limiting**: Brute-force protection for PIN entries and Authentication.
   - **Auto-Expiration**: Set links to expire after a specific timestamp.
   - **Download Limits**: Control global and **Per-User** access counts.
-- **📤 High-Performance Batch Upload**: Select and upload multiple files simultaneously with aggregate progress tracking.
+  - **Secure Infrastructure**: Hardened headers via `helmet` and `SameSite=Lax` cookies.
+- **⚡ Ultra-Snappy Performance**:
+  - **Frontend Virtualization**: Efficiently render thousands of files with zero lag using `react-window`.
+  - **Optimistic Updates**: Instant UI feedback for renaming and deleting files via TanStack Query.
+  - **Batched Uploads**: High-speed concurrent uploads with aggregate progress tracking.
 - **👁️ Advanced In-App Previews**: 
   - **Code Highlighting**: View source code for `.js`, `.ts`, `.json`, `.sql`, etc.
   - **PDF Viewer**: Embedded document rendering.
@@ -52,7 +57,8 @@ sequenceDiagram
 - **React 19** with **Vite**
 - **Tailwind CSS 4** & **Framer Motion**
 - **Radix UI** primitives
-- **TanStack Query** for server state management
+- **TanStack Query** (v5) with Optimistic Updates
+- **React Window** for virtualization
 - **Wouter** for lightweight routing
 
 ### Backend
