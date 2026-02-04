@@ -23,7 +23,27 @@ sequenceDiagram
     S3-->>Client: 4. 200 OK
     Client->>Server: 5. Sync Metadata (POST /api/files)
     Server->>DB: 6. Store File Metadata & Tags
-    Server-->>Client: 7. Success & Broadcast (WebSocket)
+    Server-->>Client: 7. Success & Broadcast (WebSocket Hub)
+```
+
+### Secure Download Flow Diagram
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Server
+    participant S3 (Storage)
+    participant Auth (Passport)
+
+    Client->>Server: 1. Request Download (GET /api/files/:id/download)
+    Server->>Server: 2. Find Latest Version Root
+    Server->>Server: 3. Check PIN / Privacy Policies
+    Auth->>Server: 4. Verify Identity (Owner Check)
+    Server-->>Client: 5. Prompt for PIN (if required)
+    Client->>Server: 6. Submit PIN (POST /?pin=****)
+    Server->>Server: 7. Constant-Time PIN Compare
+    Server->>S3 (Storage): 8. Generate Presigned GET URL
+    Server-->>Client: 9. Redirect to S3 (302)
+    Client->>S3 (Storage): 10. Fetch Binary Data
 ```
 
 ---
