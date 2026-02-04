@@ -24,4 +24,8 @@ if (!_env.success) {
     process.exit(1);
 }
 
+if (_env.data.NODE_ENV === "production" && _env.data.SESSION_SECRET === "mono-s3-file-secret-key-change-in-production") {
+    console.warn("⚠️ WARNING: Running in production with default SESSION_SECRET. This is insecure!");
+}
+
 export const env = _env.data;

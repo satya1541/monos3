@@ -32,7 +32,7 @@ export async function getPresignedDownloadUrl(
             : undefined,
     });
 
-    return getSignedUrl(s3Client, command, { expiresIn: 86400 }); // 24 hours
+    return getSignedUrl(s3Client, command, { expiresIn: 600 }); // 10 minutes for enhanced security
 }
 
 export async function getPresignedUploadUrl(

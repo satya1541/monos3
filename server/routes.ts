@@ -7,18 +7,36 @@ import { broadcastNewFile, broadcastDeleteFile, broadcastUpdateFile } from "./we
 import { isAuthenticated } from "./auth";
 import { insertFileSchema } from "@shared/schema";
 import { z } from "zod";
+import { createRateLimiter } from "./rate-limit";
+
+const pinRateLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5,
+  message: "Too many PIN attempts from this IP, please try again after 15 minutes"
+});
 
 const uploadUrlSchema = z.object({
   filename: z.string().min(1),
   type: z.string().min(1),
 });
 
+function escapeHtml(unsafe: string) {
+  return unsafe
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 function renderErrorPage(res: Response, title: string, message: string, code: number = 400) {
+  const safeTitle = escapeHtml(title);
+  const safeMessage = escapeHtml(message);
   return res.status(code).send(`
     <!DOCTYPE html>
     <html>
     <head>
-      <title>${title} - Mono S3</title>
+      <title>${safeTitle} - Mono S3</title>
       <meta name="viewport" content="width=device-width, initial-scale=1">
       <style>
         body { background: #000; color: #fff; font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
@@ -33,8 +51,8 @@ function renderErrorPage(res: Response, title: string, message: string, code: nu
     <body>
       <div class="card">
         <div class="icon">×</div>
-        <h1>${title}</h1>
-        <p>${message}</p>
+        <h1>${safeTitle}</h1>
+        <p>${safeMessage}</p>
         <a href="/" class="btn">Return Home</a>
         <div class="code">Error Code: ${code}</div>
       </div>
@@ -108,7 +126,7 @@ export async function registerRoutes(
   // GET /api/files/:id/download - Download a file with original name
   app.get("/api/files/:id/download", async (req, res) => {
     try {
-      const fileId = req.params.id;
+      const fileId = req.params.id as string;
       const file = await storage.getFile(fileId);
 
       if (!file) {
@@ -119,19 +137,28 @@ export async function registerRoutes(
       const isPreview = req.query.preview === 'true';
       const pin = req.query.pin as string;
 
+      console.log(`[Download] ID: ${fileId} | isPrivate: ${file.isPrivate} | hasPin: ${!!file.pin} | isOwner: ${isOwner} | pinProvided: ${!!pin}`);
+
       // 1. Strict Security Rule: Prohibit previews for private/PIN-protected files entirely
       if ((file.isPrivate || file.pin) && isPreview) {
+        console.log(`[Download] Preview blocked for sensitive file`);
         return renderErrorPage(res, "Preview Disabled", "Previews are disabled for private/PIN-protected files for enhanced security.", 403);
       }
 
-      // 2. Check Privacy & PIN (for downloads)
-      if (file.isPrivate && !isOwner) {
-        if (!file.pin || file.pin !== pin) {
-          return renderErrorPage(res, "Access Denied", "This file is private and requires a valid PIN for access.", 403);
+      // 2. Check Privacy & PIN (for downloads/previews)
+      if (file.isPrivate) {
+        if (!isOwner) {
+          if (!file.pin || file.pin !== pin) {
+            console.log(`[Download] Access denied: Private file, wrong/missing PIN`);
+            return renderErrorPage(res, "Access Denied", "This file is private and requires a valid PIN for access.", 403);
+          }
         }
-      } else if (file.pin && file.pin !== pin && !isOwner) {
+      } else if (file.pin && !isOwner) {
         // Not private but has PIN? Enforce it.
-        return renderErrorPage(res, "Invalid PIN", "The PIN provided is incorrect or missing. Please check the PIN and try again.", 403);
+        if (file.pin !== pin) {
+          console.log(`[Download] Access denied: PIN protected file, wrong/missing PIN`);
+          return renderErrorPage(res, "Invalid PIN", "The PIN provided is incorrect or missing. Please check the PIN and try again.", 403);
+        }
       }
 
       // 3. Check Expiration
@@ -175,9 +202,9 @@ export async function registerRoutes(
   });
 
   // GET /link/:id - Direct download (short link)
-  app.get("/link/:id", async (req, res) => {
+  app.get("/link/:id", pinRateLimiter, async (req, res) => {
     try {
-      const fileId = req.params.id;
+      const fileId = req.params.id as string;
       const file = await storage.getFile(fileId);
 
       if (!file) {
@@ -188,18 +215,15 @@ export async function registerRoutes(
       const isPreview = req.query.preview === 'true';
       const pin = req.query.pin as string;
 
+      console.log(`[Link] ID: ${fileId} | isPrivate: ${file.isPrivate} | hasPin: ${!!file.pin} | isOwner: ${isOwner} | pinProvided: ${!!pin}`);
+
       // 1. Strict Security Rule: Prohibit previews for private/PIN-protected files
       if ((file.isPrivate || file.pin) && isPreview) {
+        console.log(`[Link] Preview blocked for sensitive file`);
         return res.status(403).send("Forbidden: Previews are disabled for private files.");
       }
 
-      if (file.isPrivate && !isOwner) {
-        if (!file.pin) {
-          return renderErrorPage(res, "Access Denied", "This file is private and restricted to the owner.", 403);
-        }
-      }
-
-      // 3. Check Expiration
+      // 2. Check Expiration
       if (file.expiresAt && new Date(file.expiresAt).getTime() < Date.now()) {
         return renderErrorPage(res, "Link Expired", "This sharing link has reached its expiration date and is no longer active.", 410);
       }
@@ -274,7 +298,7 @@ export async function registerRoutes(
   // GET /link/:id/:filename - Direct download with filename
   app.get("/link/:id/:filename", async (req, res) => {
     try {
-      const fileId = req.params.id;
+      const fileId = req.params.id as string;
       const file = await storage.getFile(fileId);
 
       if (!file) {
@@ -285,25 +309,35 @@ export async function registerRoutes(
       const isPreview = req.query.preview === 'true';
       const pin = req.query.pin as string;
 
+      console.log(`[LinkFilename] ID: ${fileId} | isPrivate: ${file.isPrivate} | hasPin: ${!!file.pin} | isOwner: ${isOwner} | pinProvided: ${!!pin}`);
+
       // 1. Strict Security Rule: Prohibit previews for private/PIN-protected files
       if ((file.isPrivate || file.pin) && isPreview) {
         return renderErrorPage(res, "Preview Disabled", "Previews are disabled for private/PIN-protected files.", 403);
       }
 
       // 2. Apply the same security logic
-      if (file.isPrivate && !isOwner) {
-        if (!file.pin || file.pin !== pin) {
-          // If has PIN but not provided, redirect to pin entry page
-          if (file.pin && !pin) {
+      if (file.isPrivate) {
+        if (!isOwner) {
+          if (!file.pin || file.pin !== pin) {
+            // If has PIN but not provided, redirect to pin entry page
+            if (file.pin && !pin) {
+              console.log(`[LinkFilename] Redirecting to PIN entry`);
+              return res.redirect(`/link/${file.id}`);
+            }
+            console.log(`[LinkFilename] Access denied: Private file, wrong/missing PIN`);
+            return renderErrorPage(res, "Access Denied", "This file is private and requires a valid PIN for access.", 403);
+          }
+        }
+      } else if (file.pin && !isOwner) {
+        if (file.pin !== pin) {
+          if (!pin) {
+            console.log(`[LinkFilename] Redirecting to PIN entry`);
             return res.redirect(`/link/${file.id}`);
           }
-          return renderErrorPage(res, "Access Denied", "This file is private and requires a valid PIN for access.", 403);
+          console.log(`[LinkFilename] Access denied: PIN protected file, wrong/missing PIN`);
+          return renderErrorPage(res, "Invalid PIN", "The PIN provided is incorrect. Please check the PIN and try again.", 403);
         }
-      } else if (file.pin && file.pin !== pin && !isOwner) {
-        if (!pin) {
-          return res.redirect(`/link/${file.id}`);
-        }
-        return renderErrorPage(res, "Invalid PIN", "The PIN provided is incorrect. Please check the PIN and try again.", 403);
       }
 
       // Check Expiration
@@ -435,11 +469,8 @@ export async function registerRoutes(
   // PATCH /api/files/:id - Update file details (Owner only)
   app.patch("/api/files/:id", isAuthenticated, async (req, res) => {
     try {
-      const { name } = req.body;
+      const { name, category, isPrivate, pin, expiresAt, maxDownloads, maxDownloadsPerUser } = req.body;
       const userId = (req.user as any).id;
-      if (!name) {
-        return res.status(400).json({ error: "Name is required" });
-      }
 
       const file = await storage.getFile(req.params.id as string);
       if (!file) {
@@ -449,7 +480,16 @@ export async function registerRoutes(
         return res.status(403).json({ error: "Permission denied" });
       }
 
-      const updatedFile = await storage.updateFile(req.params.id as string, { name });
+      const updates: Partial<any> = {};
+      if (name !== undefined) updates.name = name;
+      if (category !== undefined) updates.category = category;
+      if (isPrivate !== undefined) updates.isPrivate = isPrivate;
+      if (pin !== undefined) updates.pin = pin;
+      if (expiresAt !== undefined) updates.expiresAt = expiresAt ? new Date(expiresAt) : null;
+      if (maxDownloads !== undefined) updates.maxDownloads = maxDownloads ? parseInt(maxDownloads) : null;
+      if (maxDownloadsPerUser !== undefined) updates.maxDownloadsPerUser = maxDownloadsPerUser ? parseInt(maxDownloadsPerUser) : null;
+
+      const updatedFile = await storage.updateFile(req.params.id as string, updates);
       res.json(updatedFile);
       broadcastUpdateFile(updatedFile!);
     } catch (error) {
@@ -518,7 +558,7 @@ export async function registerRoutes(
   });
 
   // POST /api/files - Save metadata (Direct Upload Sync)
-  app.post("/api/files", async (req, res) => {
+  app.post("/api/files", isAuthenticated, async (req, res) => {
     try {
       console.log(`[API] Metadata sync START | isPrivate: ${req.body.isPrivate} | userId in body: ${req.body.userId} | auth: ${req.isAuthenticated()} | userObj: ${JSON.stringify(req.user)}`);
 
@@ -530,7 +570,7 @@ export async function registerRoutes(
         isPrivate: req.body.isPrivate === 'true' || req.body.isPrivate === true,
         expiresAt: req.body.expiresAt ? new Date(req.body.expiresAt) : null,
         maxDownloadsPerUser: req.body.maxDownloadsPerUser ? parseInt(req.body.maxDownloadsPerUser) : null,
-        pin: (req.body.isPrivate === 'true' || req.body.isPrivate === true) ? req.body.pin : null,
+        pin: req.body.pin ? req.body.pin : null,
       });
 
       console.log(`[API] Metadata sync PARSED | userId: ${result.success ? result.data.userId : 'parse failed'}`);
@@ -582,9 +622,30 @@ export async function registerRoutes(
   // GET /api/files/:id/versions - Get file history
   app.get("/api/files/:id/versions", async (req, res) => {
     try {
-      const versions = await storage.getFileVersions(req.params.id as string);
+      const fileId = req.params.id as string;
+      const file = await storage.getFile(fileId);
+
+      if (!file) {
+        return res.status(404).json({ error: "File not found" });
+      }
+
+      // If private, only owner can see versions
+      const isOwner = req.isAuthenticated() && (req.user as any).id === file.userId;
+      if (file.isPrivate && !isOwner) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      let versions = await storage.getFileVersions(fileId);
+
+      // Sanitize versions
+      versions = versions.map(v => {
+        const { pin, ...sanitized } = v;
+        return isOwner ? v : sanitized as any;
+      });
+
       res.json(versions);
     } catch (error) {
+      console.error("Versions error:", error);
       res.status(500).json({ error: "Failed to get versions" });
     }
   });

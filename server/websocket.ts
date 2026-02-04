@@ -25,9 +25,10 @@ export function setupWebSocket(server: Server) {
 export function broadcastNewFile(file: File) {
     if (!wss) return;
 
+    const { pin, key, ...sanitized } = file;
     const message = JSON.stringify({
         type: "NEW_FILE",
-        payload: file,
+        payload: sanitized,
     });
 
     wss.clients.forEach((client) => {
@@ -40,9 +41,10 @@ export function broadcastNewFile(file: File) {
 export function broadcastUpdateFile(file: File) {
     if (!wss) return;
 
+    const { pin, key, ...sanitized } = file;
     const message = JSON.stringify({
         type: "UPDATE_FILE",
-        payload: file,
+        payload: sanitized,
     });
 
     wss.clients.forEach((client) => {

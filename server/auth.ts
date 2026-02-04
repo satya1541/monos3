@@ -8,6 +8,13 @@ import { eq } from "drizzle-orm";
 import bcrypt from "bcrypt";
 import { randomUUID } from "crypto";
 import { env } from "./config";
+import { createRateLimiter } from "./rate-limit";
+
+const authRateLimiter = createRateLimiter({
+    windowMs: 60 * 60 * 1000, // 1 hour
+    max: 10,
+    message: "Too many authentication attempts, please try again after an hour"
+});
 
 const SALT_ROUNDS = 10;
 
@@ -93,7 +100,7 @@ export function isAdmin(req: Request, res: Response, next: NextFunction) {
 // Register auth routes
 export function registerAuthRoutes(app: Express) {
     // Register
-    app.post("/api/auth/register", async (req, res) => {
+    app.post("/api/auth/register", authRateLimiter, async (req, res) => {
         try {
             const { username, password, displayName } = req.body;
 
@@ -148,7 +155,7 @@ export function registerAuthRoutes(app: Express) {
     });
 
     // Login
-    app.post("/api/auth/login", (req, res, next) => {
+    app.post("/api/auth/login", authRateLimiter, (req, res, next) => {
         passport.authenticate("local", (err: any, user: User | false, info: any) => {
             if (err) {
                 return res.status(500).json({ error: "Authentication error" });

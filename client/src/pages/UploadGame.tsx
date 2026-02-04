@@ -108,7 +108,7 @@ export default function UploadGame() {
                                         maxDownloadsPerUser: maxDownloadsPerUser ? parseInt(maxDownloadsPerUser) : null,
                                         tags: tags.split(",").map(t => t.trim()).filter(Boolean),
                                         parentId: parentId || null,
-                                        pin: isPrivate ? pin : null,
+                                        pin: pin || null,
                                     }),
                                 });
 

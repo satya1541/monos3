@@ -71,7 +71,12 @@ export class DatabaseStorage implements IStorage {
 
     const groupedResult = Array.from(groups.values());
     console.log(`[Storage] Returning ${groupedResult.length} groups`);
-    return groupedResult.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+
+    // Sanitize PINs for responses: Remove PIN if not the owner
+    return groupedResult.map(f => {
+      const { pin, ...sanitized } = f;
+      return (userId === f.userId) ? f : sanitized as File;
+    }).sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
   }
 
   async getUserFiles(userId: string): Promise<File[]> {
@@ -109,6 +114,8 @@ export class DatabaseStorage implements IStorage {
 
     const groupedResult = Array.from(groups.values());
     console.log(`[Storage] Returning ${groupedResult.length} user groups`);
+
+    // Files in this route are owned by the userId passed, so we can return them as is
     return groupedResult.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
   }
 

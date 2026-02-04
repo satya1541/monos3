@@ -6,13 +6,18 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { nanoid } from "nanoid";
+import { env } from "./config";
 
 const viteLogger = createLogger();
 
 export async function setupVite(server: Server, app: Express) {
   const serverOptions = {
     middlewareMode: true,
-    hmr: { server, path: "/vite-hmr" },
+    hmr: {
+      server,
+      path: "/vite-hmr",
+      clientPort: env.PORT,
+    },
     allowedHosts: true as const,
   };
 
